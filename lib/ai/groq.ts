@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { StrategyResponseSchema } from "@/lib/ai/schema";
 import { cleanGenericOtherLanguage, normalizeProject } from "@/lib/normalizeProject";
 import { buildLocalStrategy, type GenerateStrategyRequest, type GenerateStrategyResponse } from "@/lib/strategy";
@@ -13,6 +12,17 @@ Avoid generic phrases, overly poetic copy, and cheesy memorial language unless t
 
 Return strict JSON only. No markdown. No extra explanation.`;
 
+type GroqChatResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+  }>;
+  error?: {
+    message?: string;
+  };
+};
+
 function extractJson(text: string) {
   const trimmed = text.trim();
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
@@ -24,23 +34,14 @@ function extractJson(text: string) {
   return trimmed;
 }
 
-export async function generateStrategyWithGemini(request: GenerateStrategyRequest): Promise<GenerateStrategyResponse> {
-  const apiKey = process.env.GEMINI_API_KEY;
+export async function generateStrategyWithGroq(request: GenerateStrategyRequest): Promise<GenerateStrategyResponse> {
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error("Missing GEMINI_API_KEY. Add it to .env.local to enable Gemini generation.");
+    throw new Error("Missing GROQ_API_KEY. Add it to .env.local to enable Groq generation.");
   }
 
   const fallback = buildLocalStrategy(request.project);
   const normalized = normalizeProject(request.project);
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
-    systemInstruction: SYSTEM_PROMPT,
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.72,
-    },
-  });
 
   const prompt = `Create a complete POD creative strategy using this exact JSON shape as the contract. Keep all ids as strings and use the existing project id where relevant.
 
@@ -74,7 +75,31 @@ Rules:
 - Never use the literal word "Other" as a product type or visual direction.
 - Use the normalized product type and normalized visual direction when productType or visualStyle is Other.`;
 
-  const result = await model.generateContent(prompt);
-  const parsed = JSON.parse(cleanGenericOtherLanguage(extractJson(result.response.text())));
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.72,
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  const data = (await response.json()) as GroqChatResponse;
+  if (!response.ok) {
+    throw new Error(data.error?.message || `Groq request failed with ${response.status}`);
+  }
+
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Groq response did not include message content.");
+
+  const parsed = JSON.parse(cleanGenericOtherLanguage(extractJson(content)));
   return StrategyResponseSchema.parse(parsed);
 }

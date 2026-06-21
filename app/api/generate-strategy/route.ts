@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { generateStrategyWithGemini } from "@/lib/ai/gemini";
+import { generateStrategyWithGroq } from "@/lib/ai/groq";
 import { buildLocalStrategy, type GenerateStrategyRequest } from "@/lib/strategy";
 
 export async function POST(request: Request) {
@@ -9,14 +9,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing project in request body." }, { status: 400 });
   }
 
-  if (!process.env.GEMINI_API_KEY) {
+  if (!process.env.GROQ_API_KEY) {
     return NextResponse.json({ ...buildLocalStrategy(body.project), source: "local" });
   }
 
   try {
-    return NextResponse.json({ ...(await generateStrategyWithGemini(body)), source: "gemini" });
+    return NextResponse.json({ ...(await generateStrategyWithGroq(body)), source: "groq" });
   } catch (error) {
-    console.error("Gemini generation failed; falling back to local strategy.", error);
+    console.error("Groq generation failed; falling back to local strategy.", error);
     return NextResponse.json({ ...buildLocalStrategy(body.project), source: "local-fallback" });
   }
 }
