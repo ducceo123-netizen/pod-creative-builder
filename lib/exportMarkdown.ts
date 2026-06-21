@@ -1,4 +1,5 @@
 import type { Analysis } from "@/types/analysis";
+import type { ComponentPromptPack } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
 import type { OutputFlags } from "@/lib/outputFilters";
@@ -13,6 +14,7 @@ export function exportMarkdown({
   analysis,
   concepts,
   prompts,
+  componentPrompts,
   copies,
   flags,
 }: {
@@ -20,6 +22,7 @@ export function exportMarkdown({
   analysis: Analysis | null;
   concepts: Concept[];
   prompts: Record<string, PromptPack>;
+  componentPrompts?: Record<string, ComponentPromptPack>;
   copies: Record<string, CopyPack>;
   flags: OutputFlags;
 }) {
@@ -102,6 +105,29 @@ ${[
   pack.reel9x16Prompt,
 ].join("\n\n")}` : "";
 }).join("\n\n") || "No mockup prompts generated yet."}`);
+  }
+
+  if (componentPrompts && Object.keys(componentPrompts).length > 0) {
+    sections.push(`## Component Prompts
+
+${selected.map((concept) => {
+  const pack = componentPrompts[concept.id];
+  return pack
+    ? `### ${concept.name}
+
+#### Recommended Build Order
+${pack.recommendedBuildOrder.map((step, index) => `${index + 1}. ${step}`).join("\n")}
+
+${pack.prompts.map((prompt) => `#### ${prompt.title}
+
+- Type: ${prompt.promptType}
+- Tool: ${prompt.recommendedTool}
+- Ratio: ${prompt.recommendedRatio}
+- Use: ${prompt.recommendedUse}
+
+${prompt.prompt}`).join("\n\n")}`
+    : "";
+}).join("\n\n") || "No component prompts generated yet."}`);
   }
 
   if (flags.shopifyCopy) {

@@ -1,6 +1,7 @@
 import { MOCKUP_SCENES } from "@/lib/constants";
 import { cleanGenericOtherLanguage, getCustomFields, normalizeProject } from "@/lib/normalizeProject";
 import type { Analysis, ProductScores } from "@/types/analysis";
+import type { ComponentPrompt, ComponentPromptPack, ComponentPromptType } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
 import type { Project } from "@/types/project";
@@ -199,6 +200,247 @@ export function generatePromptPack(concept: Concept, productType: string): Promp
     product468x598Prompt: `${base} 468:598 ecommerce product image, vertical crop, product centered, neutral background, clear material detail, accurate color.`,
     square1x1Prompt: `${base} 1:1 Meta ad creative, product in use, strong emotional focal point, scroll-stopping but natural, no text overlay.`,
     reel9x16Prompt: `${base} 9:16 short-form video frame, hand placing the product in its setting, warm movement cue, bright realistic lighting, phone-camera perspective.`,
+  };
+}
+
+function componentPrompt(
+  concept: Concept,
+  promptType: ComponentPromptType,
+  title: string,
+  prompt: string,
+  recommendedTool: string,
+  recommendedRatio: string,
+  recommendedUse: string,
+): ComponentPrompt {
+  return {
+    id: id("component-prompt"),
+    conceptId: concept.id,
+    conceptName: concept.name,
+    promptType,
+    title,
+    prompt: cleanGenericOtherLanguage(prompt),
+    recommendedTool,
+    recommendedRatio,
+    recommendedUse,
+    copyLabel: `Copy ${title}`,
+  };
+}
+
+export function generateComponentPromptPack(concept: Concept, productType: string): ComponentPromptPack {
+  const normalizedProductType = productType === "Other" ? "Custom POD Product" : productType;
+  const product = normalizedProductType.toLowerCase();
+  const isSquishyMagnet = normalizedProductType === "Squishy Acrylic Fridge Magnet";
+  const safeRules = "original artwork only, no copied competitor layout, no brand logos, family-friendly, production-ready";
+  const buildOrder = isSquishyMagnet
+    ? [
+        "Generate clipart/body base",
+        "Integrate uploaded face",
+        "Define squishy belly and material details",
+        "Add acrylic edge and structure",
+        "Assemble final transparent product design",
+        "Generate background, lifestyle, Meta ad, and UGC contexts",
+      ]
+    : [
+        "Generate base product artwork",
+        "Add personalization area and visual details",
+        "Define material, edge, and print structure",
+        "Assemble final product design",
+        "Generate background and lifestyle contexts",
+        "Generate ad-ready and short-form creative prompts",
+      ];
+
+  const prompts = isSquishyMagnet
+    ? [
+        componentPrompt(
+          concept,
+          "clipart",
+          "Character / Clipart Prompt",
+          `Create a funny dad-body cartoon clipart base for ${concept.name}, a personalized squishy acrylic fridge magnet. Front-facing body, friendly dad-bod shape, soft rounded belly area, simple outfit that fits ${concept.buyer}, playful affectionate humor, no body-shaming, clean vector-like product art, transparent background, centered composition, no face details, leave a blank face area for the uploaded photo, ${safeRules}.`,
+          "ChatGPT Image, Ideogram, Midjourney",
+          "1:1",
+          "Generate the reusable body or character artwork.",
+        ),
+        componentPrompt(
+          concept,
+          "face_integration",
+          "Face Integration Prompt",
+          `Use the uploaded face photo and place it naturally onto the cartoon body for ${concept.name}. Keep the face recognizable, clean cutout, friendly expression, matching skin tone and lighting, natural head-to-body proportion, no creepy distortion, no over-caricature, preserve the playful custom gift feel, ${safeRules}.`,
+          "ChatGPT Image, Photoshop, Canva",
+          "1:1",
+          "Blend the uploaded face into the clipart body.",
+        ),
+        componentPrompt(
+          concept,
+          "material_detail",
+          "Material Detail Prompt",
+          `Design the tactile squishy belly detail for ${concept.name}: raised soft silicone belly area, slightly glossy, pokeable, rounded edge, clearly different from the flat acrylic print layer, realistic tactile texture, premium handmade product detail, visible enough for ecommerce close-up photography, ${safeRules}.`,
+          "ChatGPT Image, Midjourney",
+          "1:1",
+          "Define the soft belly feature and close-up material cues.",
+        ),
+        componentPrompt(
+          concept,
+          "product_structure",
+          "Product Edge / Structure Prompt",
+          `Add the physical construction for ${concept.name}: clear acrylic magnet edge around the character shape, 2-3mm visible transparent border, clean laser-cut outline, subtle thickness, slight reflection, realistic acrylic material, flat printed layer plus raised silicone belly, premium ecommerce product realism, ${safeRules}.`,
+          "ChatGPT Image, Midjourney",
+          "1:1",
+          "Show acrylic border, thickness, and product construction.",
+        ),
+        componentPrompt(
+          concept,
+          "text_quote",
+          "Text / Quote Prompt",
+          `Create short original phrase options for ${concept.name}, such as playful dad, husband, grandpa, snack, or BBQ humor. Use bold friendly typography that reads clearly at small magnet size, balanced spacing under the character, print-ready letterforms, no copied competitor slogan, no harsh body jokes, ${safeRules}.`,
+          "Ideogram, ChatGPT",
+          "1:1",
+          "Generate or refine the short text treatment.",
+        ),
+        componentPrompt(
+          concept,
+          "assembly",
+          "Product Assembly Prompt",
+          `Assemble the uploaded face, cartoon dad-body clipart, raised silicone belly, acrylic edge, and short original phrase into one production-ready squishy acrylic fridge magnet design for ${concept.name}. Centered front-facing product art, transparent background, clean edges, balanced composition, premium handmade gift quality, no mockup scene, ${safeRules}.`,
+          "ChatGPT Image, Photoshop",
+          "1:1",
+          "Combine all component pieces into the final design file.",
+        ),
+        componentPrompt(
+          concept,
+          "background",
+          "Background / Context Prompt",
+          `Bright American family kitchen with a stainless steel refrigerator, clean daylight, family-friendly atmosphere, realistic iPhone photography, natural shadows, uncluttered environment, negative space that lets the ${product} stand out, no text overlay, product-ready composition for ${concept.name}.`,
+          "Midjourney, ChatGPT Image",
+          "16:9",
+          "Generate reusable scene background or mockup context.",
+        ),
+        componentPrompt(
+          concept,
+          "lifestyle_context",
+          "Lifestyle Context Prompts",
+          `Create lifestyle scene variations for ${concept.name}: Father's Day morning gift moment in a bright kitchen; wife placing a funny custom husband magnet on the fridge; grandkids laughing near Grandpa's custom fridge buddy; office cabinet gag gift near snacks and sticky notes; close-up of a hand poking the squishy belly on a kitchen fridge; BBQ summer family moment. Realistic American home or office lighting, warm but not cheesy, no text overlay, ${safeRules}.`,
+          "Midjourney, ChatGPT Image",
+          "4:5",
+          "Create case-specific lifestyle mockups.",
+        ),
+        componentPrompt(
+          concept,
+          "meta_ad",
+          "Meta Ad Prompt",
+          `Create a realistic 1:1 Meta ad creative for ${concept.name}, a personalized squishy acrylic fridge magnet. The magnet shows a custom cartoon dad body using the uploaded face, with a visible acrylic edge and a soft silicone pokeable belly. Scene: bright American family kitchen, magnet attached to a refrigerator, child's hand gently poking the belly, Dad laughing in the background, natural morning light, realistic iPhone photo style, clean composition, no text overlay, ${safeRules}.`,
+          "ChatGPT Image, Midjourney",
+          "1:1",
+          "Generate a polished ad-ready product scene.",
+        ),
+        componentPrompt(
+          concept,
+          "ugc_reel",
+          "UGC / Reel Prompt",
+          `9:16 short-form video frame for ${concept.name}: hand about to poke the soft belly of a custom squishy dad magnet on the fridge, casual phone-camera perspective, bright kitchen daylight, playful family humor, strong scroll-stopping close-up, clear tactile action cue, no text overlay, ${safeRules}.`,
+          "Runway, Pika, ChatGPT Image",
+          "9:16",
+          "Create a motion-aware UGC or Reel starting frame.",
+        ),
+      ]
+    : [
+        componentPrompt(
+          concept,
+          "clipart",
+          "Base Artwork Prompt",
+          `Create the base artwork for ${concept.name}, a custom ${product}. ${concept.designDirection} Centered composition, clean reusable design element, transparent background, clear personalization areas, premium POD production quality, ${safeRules}.`,
+          "ChatGPT Image, Ideogram, Midjourney",
+          "1:1",
+          "Generate the reusable design building block.",
+        ),
+        componentPrompt(
+          concept,
+          "face_integration",
+          "Personalization Integration Prompt",
+          `Integrate the shopper's personalized input into ${concept.name} naturally. Preserve recognizability and emotional intent, keep proportions believable, match lighting and style, avoid awkward distortion, make the customization area clear for production, ${safeRules}.`,
+          "ChatGPT Image, Photoshop, Canva",
+          "1:1",
+          "Apply photo, name, pet, or custom field details.",
+        ),
+        componentPrompt(
+          concept,
+          "material_detail",
+          "Material Detail Prompt",
+          `Show the material qualities of ${concept.name} as a ${product}: realistic print surface, clean color edges, tactile product detail, accurate thickness or substrate, premium gift-ready finish, close-up clarity for ecommerce inspection, ${safeRules}.`,
+          "ChatGPT Image, Midjourney",
+          "1:1",
+          "Clarify material and production details.",
+        ),
+        componentPrompt(
+          concept,
+          "product_structure",
+          "Product Structure Prompt",
+          `Define the physical structure for ${concept.name}: correct ${product} shape, edge treatment, print boundaries, scale cues, mounting or display details where relevant, clean manufacturing-ready outline, ${safeRules}.`,
+          "ChatGPT Image, Midjourney",
+          "1:1",
+          "Show product form, edge, and construction.",
+        ),
+        componentPrompt(
+          concept,
+          "text_quote",
+          "Text / Quote Prompt",
+          `Create original short text or typography options for ${concept.name}. Match ${concept.buyer} and ${concept.occasion}, use readable print-ready typography, balanced spacing, no copied phrases, no brand names, avoid clutter at small product size, ${safeRules}.`,
+          "Ideogram, ChatGPT",
+          "1:1",
+          "Generate phrase and typography treatment.",
+        ),
+        componentPrompt(
+          concept,
+          "assembly",
+          "Product Assembly Prompt",
+          `Assemble the base artwork, personalization details, material cues, product structure, and text treatment into one production-ready ${product} design for ${concept.name}. Transparent or plain light background, centered product art, balanced composition, no mockup scene, ${safeRules}.`,
+          "ChatGPT Image, Photoshop",
+          "1:1",
+          "Combine all pieces into a final design file.",
+        ),
+        componentPrompt(
+          concept,
+          "background",
+          "Background / Context Prompt",
+          `${concept.mockupDirection} Create a clean context scene for ${concept.name} without redefining the full product. Realistic US-market ecommerce photography, natural shadows, uncluttered environment, product-ready negative space, no text overlay.`,
+          "Midjourney, ChatGPT Image",
+          "16:9",
+          "Generate reusable mockup background.",
+        ),
+        componentPrompt(
+          concept,
+          "lifestyle_context",
+          "Lifestyle Context Prompts",
+          `Create lifestyle scene variations for ${concept.name} around ${concept.occasion}: gift reveal moment, close-up product use, family or recipient reaction, desk or home display, packaging-ready ecommerce context. Realistic natural light, warm but not cheesy, no text overlay, ${safeRules}.`,
+          "Midjourney, ChatGPT Image",
+          "4:5",
+          "Create case-specific lifestyle mockups.",
+        ),
+        componentPrompt(
+          concept,
+          "meta_ad",
+          "Meta Ad Prompt",
+          `Create a realistic 1:1 Meta ad creative for ${concept.name}, a custom ${product} for ${concept.buyer}. Show the product in use with clear material detail, emotional gift context for ${concept.occasion}, natural iPhone photo style, clean composition, no text overlay, ${safeRules}.`,
+          "ChatGPT Image, Midjourney",
+          "1:1",
+          "Generate an ad-ready product scene.",
+        ),
+        componentPrompt(
+          concept,
+          "ugc_reel",
+          "UGC / Reel Prompt",
+          `9:16 short-form video frame for ${concept.name}: casual phone-camera perspective, hand revealing or placing the custom ${product}, clear personalization detail, warm real-life setting, scroll-stopping close-up, no text overlay, ${safeRules}.`,
+          "Runway, Pika, ChatGPT Image",
+          "9:16",
+          "Create a motion-aware UGC or Reel starting frame.",
+        ),
+      ];
+
+  return {
+    id: id("component-pack"),
+    conceptId: concept.id,
+    conceptName: concept.name,
+    recommendedBuildOrder: buildOrder,
+    prompts,
   };
 }
 

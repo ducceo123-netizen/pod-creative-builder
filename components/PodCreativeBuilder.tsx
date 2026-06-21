@@ -23,17 +23,18 @@ import type { LucideIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
 import { exportMarkdown } from "@/lib/exportMarkdown";
-import { createProject, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
+import { createProject, generateComponentPromptPack, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
 import { cleanGenericOtherLanguage, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
 import type { Analysis } from "@/types/analysis";
+import type { ComponentPromptPack } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
-const tabs = ["Analysis", "Custom Map", "Concepts", "Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
+const tabs = ["Analysis", "Custom Map", "Concepts", "Prompts", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
 const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
 const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
@@ -83,6 +84,7 @@ type GenerationVersion = {
   analysis: Analysis;
   concepts: Concept[];
   promptPacks: Record<string, PromptPack>;
+  componentPromptPacks: Record<string, ComponentPromptPack>;
   copyPacks: Record<string, CopyPack>;
   generationMeta: GenerationMeta;
   createdAt: string;
@@ -119,6 +121,7 @@ type CreativeDraft = {
   analysis?: Analysis | null;
   concepts?: Concept[];
   promptPacks?: Record<string, PromptPack>;
+  componentPromptPacks?: Record<string, ComponentPromptPack>;
   copyPacks?: Record<string, CopyPack>;
   screenshot?: ScreenshotState | null;
   conceptExtras?: ConceptExtras;
@@ -222,6 +225,7 @@ function buildDraft(args: {
   analysis: Analysis | null;
   concepts: Concept[];
   promptPacks: Record<string, PromptPack>;
+  componentPromptPacks: Record<string, ComponentPromptPack>;
   copyPacks: Record<string, CopyPack>;
   screenshot: ScreenshotState | null;
   conceptExtras: ConceptExtras;
@@ -246,6 +250,7 @@ function buildDraft(args: {
     analysis: args.analysis,
     concepts: args.concepts,
     promptPacks: args.promptPacks,
+    componentPromptPacks: args.componentPromptPacks,
     copyPacks: args.copyPacks,
     screenshot: args.screenshot,
     conceptExtras: args.conceptExtras,
@@ -282,6 +287,10 @@ function buildAssetPlans(selectedConcepts: Concept[], promptPacks: Record<string
       createdAt: now,
     }));
   });
+}
+
+function buildComponentPromptPacks(selectedConcepts: Concept[], productType: string): Record<string, ComponentPromptPack> {
+  return Object.fromEntries(selectedConcepts.map((concept) => [concept.id, generateComponentPromptPack(concept, productType)]));
 }
 
 function hasValue(value: unknown) {
@@ -518,6 +527,7 @@ export default function PodCreativeBuilder() {
   const [analysis, setAnalysis] = useState<Analysis | null>(() => getCurrentDraft()?.analysis || null);
   const [concepts, setConcepts] = useState<Concept[]>(() => getCurrentDraft()?.concepts || []);
   const [promptPacks, setPromptPacks] = useState<Record<string, PromptPack>>(() => getCurrentDraft()?.promptPacks || {});
+  const [componentPromptPacks, setComponentPromptPacks] = useState<Record<string, ComponentPromptPack>>(() => getCurrentDraft()?.componentPromptPacks || {});
   const [copyPacks, setCopyPacks] = useState<Record<string, CopyPack>>(() => getCurrentDraft()?.copyPacks || {});
   const [activeTab, setActiveTab] = useState("Analysis");
   const [activeView, setActiveView] = useState<AppView>("Dashboard");
@@ -558,6 +568,7 @@ export default function PodCreativeBuilder() {
         if (tab === "Custom Map") return outputFlags.customMap;
         if (tab === "Concepts") return outputFlags.concepts;
         if (tab === "Prompts") return outputFlags.designPrompts || outputFlags.mockupPrompts;
+        if (tab === "Component Prompts") return true;
         if (tab === "Creative Assets") return true;
         if (tab === "Shopify Copy") return outputFlags.shopifyCopy || outputFlags.seo;
         if (tab === "Meta Ads") return outputFlags.metaAds;
@@ -570,7 +581,7 @@ export default function PodCreativeBuilder() {
   const readiness = useMemo(() => getReadiness(project, screenshot), [project, screenshot]);
   const hasGeneratedPack = Boolean(analysis);
   const markdown = useMemo(() => {
-    const base = exportMarkdown({ project, analysis, concepts, prompts: promptPacks, copies: copyPacks, flags: outputFlags });
+    const base = exportMarkdown({ project, analysis, concepts, prompts: promptPacks, componentPrompts: componentPromptPacks, copies: copyPacks, flags: outputFlags });
     return `${base}
 ## Generation Metadata
 
@@ -582,7 +593,7 @@ export default function PodCreativeBuilder() {
 - Version ID: ${activeVersionId || versions[0]?.id || "No version"}
 - Screenshot included: ${screenshot ? "Yes" : "No"}
 `;
-  }, [activeVersionId, analysis, concepts, copyPacks, currentDraftId, generationMeta, outputFlags, project, promptPacks, screenshot, versions]);
+  }, [activeVersionId, analysis, componentPromptPacks, concepts, copyPacks, currentDraftId, generationMeta, outputFlags, project, promptPacks, screenshot, versions]);
   const jsonExportValue = useMemo(() => {
     const normalized = normalizeProject(project);
     const filtered = filterExportData({ project, concepts, promptPacks, copyPacks });
@@ -596,6 +607,7 @@ export default function PodCreativeBuilder() {
         analysis,
         concepts: filtered.concepts,
         promptPacks: filtered.promptPacks,
+        componentPromptPacks,
         copyPacks: filtered.copyPacks,
         assetPlans,
         generationMeta,
@@ -607,7 +619,7 @@ export default function PodCreativeBuilder() {
       null,
       2,
     ));
-  }, [analysis, assetPlans, concepts, copyPacks, generationMeta, project, promptPacks, screenshot, versions]);
+  }, [analysis, assetPlans, componentPromptPacks, concepts, copyPacks, generationMeta, project, promptPacks, screenshot, versions]);
   const genericExportWarning = useMemo(() => hasGenericOutputWarning(`${markdown}\n${jsonExportValue}`), [jsonExportValue, markdown]);
 
   const updateProject = <K extends keyof Project>(key: K, value: Project[K]) => {
@@ -626,6 +638,7 @@ export default function PodCreativeBuilder() {
   };
 
   const applyStrategy = (strategy: GenerateStrategyResponse, meta: GenerationMeta) => {
+    const normalized = normalizeProject(project);
     const nextProject: Project = {
       ...project,
       status: "generated",
@@ -633,6 +646,7 @@ export default function PodCreativeBuilder() {
       updatedAt: new Date().toISOString(),
     };
     const draftId = currentDraftId || id("draft");
+    const nextComponentPromptPacks = buildComponentPromptPacks(strategy.concepts.filter((concept) => concept.selected), normalized.normalizedProductType);
     const version: GenerationVersion = {
       id: id("version"),
       draftId,
@@ -640,6 +654,7 @@ export default function PodCreativeBuilder() {
       analysis: strategy.analysis,
       concepts: strategy.concepts,
       promptPacks: strategy.promptPacks,
+      componentPromptPacks: nextComponentPromptPacks,
       copyPacks: strategy.copyPacks,
       generationMeta: meta,
       createdAt: new Date().toISOString(),
@@ -653,6 +668,7 @@ export default function PodCreativeBuilder() {
       analysis: strategy.analysis,
       concepts: strategy.concepts,
       promptPacks: strategy.promptPacks,
+      componentPromptPacks: nextComponentPromptPacks,
       copyPacks: strategy.copyPacks,
       screenshot,
       conceptExtras,
@@ -666,6 +682,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(strategy.analysis);
     setConcepts(strategy.concepts);
     setPromptPacks(strategy.promptPacks);
+    setComponentPromptPacks(nextComponentPromptPacks);
     setCopyPacks(strategy.copyPacks);
     setGenerationMeta(meta);
     setStrategySource(getSourceLabel(meta));
@@ -737,17 +754,20 @@ export default function PodCreativeBuilder() {
     const normalized = normalizeProject(project);
     const nextConcepts = generateConcepts(project, analysis);
     const nextPrompts: Record<string, PromptPack> = {};
+    const nextComponentPrompts: Record<string, ComponentPromptPack> = {};
     const nextCopies: Record<string, CopyPack> = {};
 
     nextConcepts
       .filter((concept) => concept.selected)
       .forEach((concept) => {
         nextPrompts[concept.id] = generatePromptPack(concept, normalized.normalizedProductType);
+        nextComponentPrompts[concept.id] = generateComponentPromptPack(concept, normalized.normalizedProductType);
         nextCopies[concept.id] = generateCopyPack(concept, normalized.normalizedProductType);
       });
 
     setConcepts(nextConcepts);
     setPromptPacks(nextPrompts);
+    setComponentPromptPacks(nextComponentPrompts);
     setCopyPacks(nextCopies);
   };
 
@@ -759,6 +779,7 @@ export default function PodCreativeBuilder() {
       analysis,
       concepts,
       promptPacks,
+      componentPromptPacks,
       copyPacks,
       screenshot,
       conceptExtras,
@@ -784,12 +805,14 @@ export default function PodCreativeBuilder() {
   };
 
   const loadDraft = (draft: CreativeDraft) => {
+    const normalized = normalizeProject(draft.project);
     setCurrentDraftId(draft.id);
     localStorage.setItem(CURRENT_DRAFT_ID_KEY, draft.id);
     setProject(draft.project);
     setAnalysis(draft.analysis || null);
     setConcepts(draft.concepts || []);
     setPromptPacks(draft.promptPacks || {});
+    setComponentPromptPacks(draft.componentPromptPacks || buildComponentPromptPacks((draft.concepts || []).filter((concept) => concept.selected), normalized.normalizedProductType));
     setCopyPacks(draft.copyPacks || {});
     setScreenshot(draft.screenshot || null);
     setConceptExtras(draft.conceptExtras || {});
@@ -813,6 +836,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(null);
     setConcepts([]);
     setPromptPacks({});
+    setComponentPromptPacks({});
     setCopyPacks({});
     setScreenshot(null);
     setConceptExtras({});
@@ -880,6 +904,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(null);
     setConcepts([]);
     setPromptPacks({});
+    setComponentPromptPacks({});
     setCopyPacks({});
     setActiveTab("Analysis");
     setStrategySource("");
@@ -903,7 +928,14 @@ export default function PodCreativeBuilder() {
         const selected = !concept.selected;
         if (selected) {
           setPromptPacks((packs) => ({ ...packs, [concept.id]: generatePromptPack(concept, normalized.normalizedProductType) }));
+          setComponentPromptPacks((packs) => ({ ...packs, [concept.id]: generateComponentPromptPack(concept, normalized.normalizedProductType) }));
           setCopyPacks((packs) => ({ ...packs, [concept.id]: generateCopyPack(concept, normalized.normalizedProductType) }));
+        } else {
+          setComponentPromptPacks((packs) => {
+            const next = { ...packs };
+            delete next[concept.id];
+            return next;
+          });
         }
         return { ...concept, selected };
       });
@@ -929,6 +961,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(version.analysis);
     setConcepts(version.concepts);
     setPromptPacks(version.promptPacks);
+    setComponentPromptPacks(version.componentPromptPacks || buildComponentPromptPacks(version.concepts.filter((concept) => concept.selected), normalizeProject(project).normalizedProductType));
     setCopyPacks(version.copyPacks);
     setGenerationMeta(version.generationMeta);
     setActiveVersionId(version.id);
@@ -1233,6 +1266,14 @@ export default function PodCreativeBuilder() {
                     {displayedActiveTab === "Prompts" && (
                       <PromptsTab selectedConcepts={selectedConcepts} promptPacks={promptPacks} flags={outputFlags} onCopied={showCopied} />
                     )}
+                    {displayedActiveTab === "Component Prompts" && (
+                      <ComponentPromptsTab
+                        selectedConcepts={selectedConcepts}
+                        componentPromptPacks={componentPromptPacks}
+                        onCopied={showCopied}
+                        onDownload={download}
+                      />
+                    )}
                     {displayedActiveTab === "Creative Assets" && (
                       <CreativeAssetsTab
                         selectedConcepts={selectedConcepts}
@@ -1251,6 +1292,7 @@ export default function PodCreativeBuilder() {
                         markdown={markdown}
                         jsonValue={jsonExportValue}
                         assetPlans={assetPlans}
+                        componentPromptPacks={componentPromptPacks}
                         copyPacks={copyPacks}
                         selectedConcepts={selectedConcepts}
                         analysis={analysis}
@@ -2107,6 +2149,146 @@ function PromptsTab({
   );
 }
 
+function formatComponentPromptMarkdown(selectedConcepts: Concept[], componentPromptPacks: Record<string, ComponentPromptPack>) {
+  return selectedConcepts
+    .map((concept) => {
+      const pack = componentPromptPacks[concept.id];
+      if (!pack) return "";
+      return `# ${concept.name}
+
+## Recommended Build Order
+${pack.recommendedBuildOrder.map((step, index) => `${index + 1}. ${step}`).join("\n")}
+
+${pack.prompts
+  .map(
+    (prompt) => `## ${prompt.title}
+- Type: ${prompt.promptType}
+- Tool: ${prompt.recommendedTool}
+- Ratio: ${prompt.recommendedRatio}
+- Use: ${prompt.recommendedUse}
+
+${prompt.prompt}`,
+  )
+  .join("\n\n")}`;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function conceptBrief(concept: Concept) {
+  return `Concept: ${concept.name}
+Idea: ${concept.oneLineIdea}
+Buyer: ${concept.buyer}
+Occasion: ${concept.occasion}
+Design direction: ${concept.designDirection}
+Mockup direction: ${concept.mockupDirection}
+Ad hook: ${concept.adHook}`;
+}
+
+function toolFormattedPrompt(tool: "ChatGPT" | "Midjourney" | "Ideogram", concept: Concept, prompt: ComponentPromptPack["prompts"][number]) {
+  if (tool === "Midjourney") return `${prompt.prompt} --ar ${prompt.recommendedRatio.replace(":", ":")} --style raw`;
+  if (tool === "Ideogram") return `${prompt.prompt}\n\nTypography guidance: keep any text original, readable, and print-ready. Avoid copied slogans.`;
+  return `${conceptBrief(concept)}
+
+Task: ${prompt.title}
+Recommended use: ${prompt.recommendedUse}
+Recommended ratio: ${prompt.recommendedRatio}
+
+Prompt:
+${prompt.prompt}`;
+}
+
+function ComponentPromptsTab({
+  selectedConcepts,
+  componentPromptPacks,
+  onCopied,
+  onDownload,
+}: {
+  selectedConcepts: Concept[];
+  componentPromptPacks: Record<string, ComponentPromptPack>;
+  onCopied: () => void;
+  onDownload: (name: string, value: string, type: string) => void;
+}) {
+  if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to generate component prompt packs.</p>;
+
+  const markdownPack = formatComponentPromptMarkdown(selectedConcepts, componentPromptPacks);
+  const jsonPack = JSON.stringify(selectedConcepts.map((concept) => componentPromptPacks[concept.id]).filter(Boolean), null, 2);
+
+  return (
+    <div className="space-y-6">
+      <TabIntro
+        eyebrow="Component Prompts"
+        title="Design building-block prompts"
+        description="Break each selected concept into reusable component prompts for clipart, personalization, materials, assembly, mockups, ads, and UGC frames."
+        action={
+          <>
+            <CopyButton value={markdownPack || "No component prompts generated yet."} onCopied={onCopied} label="Copy pack" />
+            <button type="button" onClick={() => onDownload("component-prompts.md", markdownPack || "No component prompts generated yet.", "text/markdown")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+              <Download size={16} />
+              Export Markdown
+            </button>
+            <button type="button" onClick={() => onDownload("component-prompts.json", jsonPack, "application/json")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+              <FileJson size={16} />
+              Export JSON
+            </button>
+          </>
+        }
+      />
+      {selectedConcepts.map((concept) => {
+        const pack = componentPromptPacks[concept.id];
+        if (!pack) return null;
+        const conceptMarkdown = formatComponentPromptMarkdown([concept], componentPromptPacks);
+
+        return (
+          <details key={concept.id} open className="border-b border-border pb-6 last:border-b-0">
+            <summary className="cursor-pointer text-xl font-medium text-primary">{concept.name}</summary>
+            <div className="mt-4 space-y-4">
+              <div className="bg-surface-muted p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h4 className="text-sm font-semibold text-primary">Recommended build order</h4>
+                    <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-secondary">
+                      {pack.recommendedBuildOrder.map((step) => (
+                        <li key={step}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+                  <CopyButton value={conceptMarkdown} onCopied={onCopied} label="Copy concept pack" />
+                </div>
+              </div>
+              <div className="grid gap-3">
+                {pack.prompts.map((prompt) => (
+                  <details key={prompt.id} open className="rounded-xl border border-border bg-white p-4">
+                    <summary className="cursor-pointer">
+                      <span className="font-medium text-primary">{prompt.title}</span>
+                      <span className="ml-2 rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-secondary">{prompt.promptType}</span>
+                    </summary>
+                    <div className="mt-3 space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-lg border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary">{prompt.recommendedTool}</span>
+                        <span className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{prompt.recommendedRatio}</span>
+                        <span className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{prompt.recommendedUse}</span>
+                      </div>
+                      <p className="max-h-44 overflow-auto rounded-lg bg-surface-muted p-4 font-mono text-sm leading-6 text-secondary">{prompt.prompt}</p>
+                      <div className="flex flex-wrap gap-2">
+                        <CopyButton value={prompt.prompt} onCopied={onCopied} label="Copy Prompt" />
+                        <CopyButton value={`${conceptBrief(concept)}\n\nPrompt:\n${prompt.prompt}`} onCopied={onCopied} label="Copy With Concept Brief" />
+                        <CopyButton value={toolFormattedPrompt("ChatGPT", concept, prompt)} onCopied={onCopied} label="Copy For ChatGPT" />
+                        <CopyButton value={toolFormattedPrompt("Midjourney", concept, prompt)} onCopied={onCopied} label="Copy For Midjourney" />
+                        <CopyButton value={toolFormattedPrompt("Ideogram", concept, prompt)} onCopied={onCopied} label="Copy For Ideogram" />
+                      </div>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 function ShopifyTab({
   selectedConcepts,
   copyPacks,
@@ -2267,6 +2449,7 @@ function ExportTab({
   markdown,
   jsonValue,
   assetPlans,
+  componentPromptPacks,
   copyPacks,
   selectedConcepts,
   analysis,
@@ -2281,6 +2464,7 @@ function ExportTab({
   markdown: string;
   jsonValue: string;
   assetPlans: CreativeAssetPlan[];
+  componentPromptPacks: Record<string, ComponentPromptPack>;
   copyPacks: Record<string, CopyPack>;
   selectedConcepts: Concept[];
   analysis: Analysis | null;
@@ -2293,6 +2477,8 @@ function ExportTab({
   onDownload: (name: string, value: string, type: string) => void;
 }) {
   const assetPromptPack = assetPlans.map((asset) => `## ${asset.title}\n- Type: ${asset.type}\n- Ratio: ${asset.ratio}\n\n${asset.prompt}`).join("\n\n");
+  const componentPromptMarkdown = formatComponentPromptMarkdown(selectedConcepts, componentPromptPacks);
+  const componentPromptJson = JSON.stringify(selectedConcepts.map((concept) => componentPromptPacks[concept.id]).filter(Boolean), null, 2);
   const shopifyPack = selectedConcepts
     .map((concept) => {
       const pack = copyPacks[concept.id];
@@ -2357,6 +2543,8 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {[
+          ["Component Prompt Pack", "component-prompts.md", componentPromptMarkdown || "No component prompts generated yet.", "text/markdown"],
+          ["Component Prompts JSON", "component-prompts.json", componentPromptJson, "application/json"],
           ["Creative Prompt Pack", "creative-prompt-pack.txt", assetPromptPack || "No asset prompts planned yet.", "text/plain"],
           ["Shopify Listing Draft", "shopify-listing-draft.md", shopifyPack || "No Shopify copy generated yet.", "text/markdown"],
           ["Meta Ads Pack", "meta-ads-pack.md", metaPack || "No Meta ads copy generated yet.", "text/markdown"],
