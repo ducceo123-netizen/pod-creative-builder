@@ -17,6 +17,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ ...(await generateStrategyWithGroq(body)), source: "groq" });
   } catch (error) {
     console.error("Groq generation failed; falling back to local strategy.", error);
-    return NextResponse.json({ ...buildLocalStrategy(body.project), source: "local-fallback" });
+    return NextResponse.json({
+      ...buildLocalStrategy(body.project),
+      source: "local-fallback",
+      fallbackReason: error instanceof Error ? error.message : "Groq generation failed.",
+    });
   }
 }

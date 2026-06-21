@@ -625,18 +625,13 @@ export default function PodCreativeBuilder() {
   };
 
   const applyStrategy = (strategy: GenerateStrategyResponse, meta: GenerationMeta) => {
-    setAnalysis(strategy.analysis);
-    setConcepts(strategy.concepts);
-    setPromptPacks(strategy.promptPacks);
-    setCopyPacks(strategy.copyPacks);
-    setGenerationMeta(meta);
-    setStrategySource(getSourceLabel(meta));
-    setProject((current) => ({ ...current, status: "generated", name: current.productTitle || current.name }));
+    const nextProject: Project = {
+      ...project,
+      status: "generated",
+      name: project.productTitle || project.name,
+      updatedAt: new Date().toISOString(),
+    };
     const draftId = currentDraftId || id("draft");
-    if (!currentDraftId) {
-      setCurrentDraftId(draftId);
-      localStorage.setItem(CURRENT_DRAFT_ID_KEY, draftId);
-    }
     const version: GenerationVersion = {
       id: id("version"),
       draftId,
@@ -648,9 +643,42 @@ export default function PodCreativeBuilder() {
       generationMeta: meta,
       createdAt: new Date().toISOString(),
     };
-    setVersions((current) => [version, ...current]);
+    const nextVersions = [version, ...versions];
+    const nextAssetPlans = buildAssetPlans(strategy.concepts.filter((concept) => concept.selected), strategy.promptPacks);
+    const existing = drafts.find((draft) => draft.id === draftId);
+    const nextDraft = buildDraft({
+      id: draftId,
+      project: nextProject,
+      analysis: strategy.analysis,
+      concepts: strategy.concepts,
+      promptPacks: strategy.promptPacks,
+      copyPacks: strategy.copyPacks,
+      screenshot,
+      conceptExtras,
+      assetPlans: nextAssetPlans,
+      generationMeta: meta,
+      versions: nextVersions,
+      createdAt: existing?.createdAt,
+    });
+    const nextDrafts = existing ? drafts.map((draft) => (draft.id === draftId ? nextDraft : draft)) : [nextDraft, ...drafts];
+
+    setAnalysis(strategy.analysis);
+    setConcepts(strategy.concepts);
+    setPromptPacks(strategy.promptPacks);
+    setCopyPacks(strategy.copyPacks);
+    setGenerationMeta(meta);
+    setStrategySource(getSourceLabel(meta));
+    setProject(nextProject);
+    setCurrentDraftId(draftId);
+    localStorage.setItem(CURRENT_DRAFT_ID_KEY, draftId);
+    setVersions(nextVersions);
     setActiveVersionId(version.id);
-    setAssetPlans(buildAssetPlans(strategy.concepts.filter((concept) => concept.selected), strategy.promptPacks));
+    setAssetPlans(nextAssetPlans);
+    setDrafts(nextDrafts);
+    writeDrafts(nextDrafts);
+    localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
+    if (screenshot) localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
+    setHasUnsavedChanges(false);
     setActiveTab(visibleTabs[0] || "Overview");
     setToast("Creative pack generated");
     window.setTimeout(() => setToast(""), 1600);
@@ -674,14 +702,14 @@ export default function PodCreativeBuilder() {
       });
 
       if (!response.ok) throw new Error(`Generate request failed with ${response.status}`);
-      const data = (await response.json()) as GenerateStrategyResponse & { source?: string };
+      const data = (await response.json()) as GenerateStrategyResponse & { source?: string; fallbackReason?: string };
       const fallbackUsed = data.source === "local-fallback" || data.source === "local";
       applyStrategy(data, {
         usedAI: data.source === "groq",
         generationSource: data.source === "groq" ? "groq" : "local-template",
         model: data.source === "groq" ? "llama-3.3-70b-versatile" : undefined,
         fallbackUsed,
-        fallbackReason: fallbackUsed ? "API route used local template generation." : undefined,
+        fallbackReason: fallbackUsed ? data.fallbackReason || "API route used local template generation." : undefined,
         durationMs: new Date().getTime() - startedAt,
         generatedAt: new Date().toISOString(),
       });
