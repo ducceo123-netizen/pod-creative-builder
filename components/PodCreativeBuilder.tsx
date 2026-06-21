@@ -21,6 +21,7 @@ import { useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
 import { exportMarkdown } from "@/lib/exportMarkdown";
 import { createProject, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
+import { cleanGenericOtherLanguage, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
 import type { Analysis } from "@/types/analysis";
@@ -70,12 +71,14 @@ function createDefaultProject() {
     productDescription: "",
     competitorUrl: "",
     productType: "",
+    customProductType: "",
     buyerPersona: "",
     occasion: "",
     niche: "",
     priceRange: "",
     brandVoice: [],
     visualStyle: [],
+    customVisualStyle: "",
     avoidList: "",
     userNotes: "",
     outputs: [],
@@ -88,14 +91,20 @@ function hasValue(value: unknown) {
 }
 
 function getReadiness(project: Project, screenshot: ScreenshotState | null): ReadinessResult {
+  const normalized = normalizeProject(project);
+  const hasSpecificProduct = project.productType === "Other" ? normalized.normalizedProductType !== "Custom POD Product" : hasValue(project.productType);
+  const hasSpecificStyle =
+    project.visualStyle?.includes("Other") && project.visualStyle.length === 1
+      ? normalized.normalizedVisualDirection !== "Custom POD Product design direction with original layout, clean personalization areas, gift-ready composition, and no copied competitor elements"
+      : hasValue(project.visualStyle);
   const checks: Array<[boolean, string]> = [
     [hasValue(project.competitorUrl) || hasValue(project.productDescription) || Boolean(screenshot), "Add a competitor URL, notes, or screenshot"],
-    [hasValue(project.productType), "Choose a product type"],
+    [hasSpecificProduct, "Choose or specify a product type"],
     [hasValue(project.buyerPersona), "Choose a buyer"],
     [hasValue(project.occasion), "Choose an occasion"],
     [hasValue(project.niche), "Add a niche"],
     [hasValue(project.brandVoice), "Pick at least one brand voice"],
-    [hasValue(project.visualStyle), "Pick at least one visual style"],
+    [hasSpecificStyle, "Pick or describe a visual style"],
     [(project.outputs?.length || 0) >= 3, "Select at least 3 output goals"],
   ];
   const completed = checks.filter(([done]) => done).length;
@@ -351,10 +360,15 @@ export default function PodCreativeBuilder() {
     [analysis, concepts, copyPacks, outputFlags, project, promptPacks],
   );
   const jsonExportValue = useMemo(() => {
+    const normalized = normalizeProject(project);
     const filtered = filterExportData({ project, concepts, promptPacks, copyPacks });
-    return JSON.stringify(
+    return cleanGenericOtherLanguage(JSON.stringify(
       {
-        project,
+        project: {
+          ...project,
+          productType: normalized.normalizedProductType,
+          visualStyle: [normalized.normalizedVisualDirection],
+        },
         analysis,
         concepts: filtered.concepts,
         promptPacks: filtered.promptPacks,
@@ -364,8 +378,9 @@ export default function PodCreativeBuilder() {
       },
       null,
       2,
-    );
+    ));
   }, [analysis, concepts, copyPacks, project, promptPacks, screenshot]);
+  const genericExportWarning = useMemo(() => hasGenericOutputWarning(`${markdown}\n${jsonExportValue}`), [jsonExportValue, markdown]);
 
   const updateProject = <K extends keyof Project>(key: K, value: Project[K]) => {
     setProject((current) => ({ ...current, [key]: value, updatedAt: new Date().toISOString() }));
@@ -425,6 +440,7 @@ export default function PodCreativeBuilder() {
   const regenerateConcepts = () => {
     if (!analysis) return;
 
+    const normalized = normalizeProject(project);
     const nextConcepts = generateConcepts(project, analysis);
     const nextPrompts: Record<string, PromptPack> = {};
     const nextCopies: Record<string, CopyPack> = {};
@@ -432,8 +448,8 @@ export default function PodCreativeBuilder() {
     nextConcepts
       .filter((concept) => concept.selected)
       .forEach((concept) => {
-        nextPrompts[concept.id] = generatePromptPack(concept, project.productType || "Product");
-        nextCopies[concept.id] = generateCopyPack(concept, project.productType || "Product");
+        nextPrompts[concept.id] = generatePromptPack(concept, normalized.normalizedProductType);
+        nextCopies[concept.id] = generateCopyPack(concept, normalized.normalizedProductType);
       });
 
     setConcepts(nextConcepts);
@@ -482,13 +498,14 @@ export default function PodCreativeBuilder() {
   };
 
   const toggleConcept = (conceptId: string) => {
+    const normalized = normalizeProject(project);
     setConcepts((current) =>
       current.map((concept) => {
         if (concept.id !== conceptId) return concept;
         const selected = !concept.selected;
         if (selected) {
-          setPromptPacks((packs) => ({ ...packs, [concept.id]: generatePromptPack(concept, project.productType || "Product") }));
-          setCopyPacks((packs) => ({ ...packs, [concept.id]: generateCopyPack(concept, project.productType || "Product") }));
+          setPromptPacks((packs) => ({ ...packs, [concept.id]: generatePromptPack(concept, normalized.normalizedProductType) }));
+          setCopyPacks((packs) => ({ ...packs, [concept.id]: generateCopyPack(concept, normalized.normalizedProductType) }));
         }
         return { ...concept, selected };
       }),
@@ -674,7 +691,14 @@ export default function PodCreativeBuilder() {
                     )}
                     {displayedActiveTab === "Meta Ads" && <MetaTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={outputFlags} onCopied={showCopied} />}
                     {displayedActiveTab === "Export" && (
-                      <ExportTab markdown={markdown} jsonValue={jsonExportValue} flags={outputFlags} onCopied={showCopied} onDownload={download} />
+                      <ExportTab
+                        markdown={markdown}
+                        jsonValue={jsonExportValue}
+                        flags={outputFlags}
+                        hasGenericWarning={genericExportWarning}
+                        onCopied={showCopied}
+                        onDownload={download}
+                      />
                     )}
                   </>
                 )}
@@ -822,6 +846,17 @@ function BriefForm({
             <TextInput value={project.priceRange || ""} onChange={(value) => updateProject("priceRange", value)} placeholder="$19-$39" />
           </div>
         </div>
+        {project.productType === "Other" ? (
+          <div className="space-y-2">
+            <FieldLabel>Specify product type</FieldLabel>
+            <TextInput
+              value={project.customProductType || ""}
+              onChange={(value) => updateProject("customProductType", value)}
+              placeholder="Example: Squishy Acrylic Fridge Magnet, Custom Photo Acrylic Plaque, Pet Memorial Suncatcher"
+            />
+            <p className="text-xs leading-5 text-secondary">Tell the tool what this product actually is. This helps avoid generic output like &quot;custom product.&quot;</p>
+          </div>
+        ) : null}
       </FormSection>
 
       <FormSection title="Brand Direction" helper="Choose the tone and visual language the generated angles should follow.">
@@ -833,6 +868,19 @@ function BriefForm({
           <FieldLabel>Visual style</FieldLabel>
           <MultiPillPicker options={ART_STYLES} selected={project.visualStyle || []} onChange={(value) => updateProject("visualStyle", value)} />
         </div>
+        {project.visualStyle?.includes("Other") ? (
+          <div className="space-y-2">
+            <FieldLabel>Specify visual style</FieldLabel>
+            <TextInput
+              value={project.customVisualStyle || ""}
+              onChange={(value) => updateProject("customVisualStyle", value)}
+              placeholder="Example: funny custom character with realistic photo face and soft squishy belly"
+            />
+            <p className="text-xs leading-5 text-secondary">
+              Describe the visual direction in plain words. Example: funny cartoon body with realistic photo face and soft squishy belly.
+            </p>
+          </div>
+        ) : null}
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <FieldLabel>Avoid words/visuals</FieldLabel>
@@ -916,13 +964,14 @@ function BriefSummary({
   isGenerating: boolean;
   readiness: ReadinessResult;
 }) {
+  const normalized = normalizeProject(project);
   const summary = [
-    ["Product type", project.productType],
+    ["Product type", project.productType === "Other" ? normalized.normalizedProductType : project.productType],
     ["Buyer", project.buyerPersona],
     ["Occasion", project.occasion],
     ["Niche", project.niche],
     ["Brand voice", project.brandVoice?.join(", ")],
-    ["Visual style", project.visualStyle?.join(", ")],
+    ["Visual style", project.visualStyle?.includes("Other") ? normalized.normalizedVisualDirection : project.visualStyle?.join(", ")],
     ["Outputs", `${project.outputs?.length || 0} selected`],
     ["Competitor input", project.competitorUrl || project.productDescription ? "Provided" : "Missing"],
     ["Screenshot", screenshot ? screenshot.name : "Not uploaded"],
@@ -1365,12 +1414,14 @@ function ExportTab({
   markdown,
   jsonValue,
   flags,
+  hasGenericWarning,
   onCopied,
   onDownload,
 }: {
   markdown: string;
   jsonValue: string;
   flags: OutputFlags;
+  hasGenericWarning: boolean;
   onCopied: () => void;
   onDownload: (name: string, value: string, type: string) => void;
 }) {
@@ -1381,6 +1432,11 @@ function ExportTab({
         title="Download or copy the full pack"
         description="Download everything as Markdown or JSON so you can use it with Codex, Shopify, or your design workflow."
       />
+      {hasGenericWarning ? (
+        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-warning">
+          This output may be too generic. Add a specific product type or visual style before exporting.
+        </div>
+      ) : null}
       <div className="flex flex-wrap gap-3">
         {flags.exportMarkdown ? (
           <button type="button" onClick={() => onDownload("pod-creative-pack.md", markdown, "text/markdown")} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">

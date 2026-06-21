@@ -1,4 +1,5 @@
 import { generateAnalysis, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
+import { normalizeProject } from "@/lib/normalizeProject";
 import type { Analysis } from "@/types/analysis";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
@@ -18,6 +19,7 @@ export type GenerateStrategyResponse = {
 };
 
 export function buildLocalStrategy(project: Project): GenerateStrategyResponse {
+  const normalized = normalizeProject(project);
   const analysis = generateAnalysis(project);
   const concepts = generateConcepts(project, analysis);
   const promptPacks: Record<string, PromptPack> = {};
@@ -26,8 +28,8 @@ export function buildLocalStrategy(project: Project): GenerateStrategyResponse {
   concepts
     .filter((concept) => concept.selected)
     .forEach((concept) => {
-      promptPacks[concept.id] = generatePromptPack(concept, project.productType || "Product");
-      copyPacks[concept.id] = generateCopyPack(concept, project.productType || "Product");
+      promptPacks[concept.id] = generatePromptPack(concept, normalized.normalizedProductType);
+      copyPacks[concept.id] = generateCopyPack(concept, normalized.normalizedProductType);
     });
 
   return { analysis, concepts, promptPacks, copyPacks };

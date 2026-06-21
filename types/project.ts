@@ -12,6 +12,7 @@ export type Project = {
   productDescription?: string;
   adCopy?: string;
   productType?: string;
+  customProductType?: string;
   targetMarket?: string;
   buyerPersona?: string;
   occasion?: string;
@@ -19,6 +20,7 @@ export type Project = {
   priceRange?: string;
   brandVoice?: string[];
   visualStyle?: string[];
+  customVisualStyle?: string;
   avoidList?: string;
   userNotes?: string;
   outputs?: string[];

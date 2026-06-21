@@ -2,6 +2,7 @@ import type { Analysis } from "@/types/analysis";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
 import type { OutputFlags } from "@/lib/outputFilters";
+import { cleanGenericOtherLanguage, normalizeProject } from "@/lib/normalizeProject";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
@@ -22,18 +23,19 @@ export function exportMarkdown({
   copies: Record<string, CopyPack>;
   flags: OutputFlags;
 }) {
+  const normalized = normalizeProject(project);
   const selected = concepts.filter((concept) => concept.selected);
   const sections = [`# POD Creative Pack
 
 ## Project Brief
 
 - Project: ${project.name}
-- Product type: ${project.productType || "Not set"}
+- Product type: ${normalized.normalizedProductType || "Not set"}
 - Buyer persona: ${project.buyerPersona || "Not set"}
 - Occasion: ${project.occasion || "Not set"}
 - Niche: ${project.niche || "Not set"}
 - Brand voice: ${project.brandVoice?.join(", ") || "Not set"}
-- Visual style: ${project.visualStyle?.join(", ") || "Not set"}
+- Visual style: ${normalized.normalizedVisualDirection || "Not set"}
 - Competitor: ${project.competitorBrand || "Not set"}
 - Competitor URL: ${project.competitorUrl || "Not set"}`];
 
@@ -138,5 +140,5 @@ ${selected.flatMap((concept) => copies[concept.id]?.tags || []).join(", ") || "N
 - Use prompt packs to create original design and mockup assets.
 - Keep competitor research as strategy input only, not a design source.`);
 
-  return `${sections.join("\n\n")}\n`;
+  return cleanGenericOtherLanguage(`${sections.join("\n\n")}\n`);
 }

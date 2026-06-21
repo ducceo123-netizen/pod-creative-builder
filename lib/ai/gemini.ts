@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { StrategyResponseSchema } from "@/lib/ai/schema";
+import { cleanGenericOtherLanguage, normalizeProject } from "@/lib/normalizeProject";
 import { buildLocalStrategy, type GenerateStrategyRequest, type GenerateStrategyResponse } from "@/lib/strategy";
 
 const SYSTEM_PROMPT = `You are a senior POD product strategist, Shopify conversion copywriter, and Meta Ads creative strategist.
@@ -30,6 +31,7 @@ export async function generateStrategyWithGemini(request: GenerateStrategyReques
   }
 
   const fallback = buildLocalStrategy(request.project);
+  const normalized = normalizeProject(request.project);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
@@ -45,6 +47,16 @@ export async function generateStrategyWithGemini(request: GenerateStrategyReques
 Project brief:
 ${JSON.stringify(request.project, null, 2)}
 
+Normalized product inputs:
+${JSON.stringify(
+  {
+    productType: normalized.normalizedProductType,
+    visualDirection: normalized.normalizedVisualDirection,
+  },
+  null,
+  2,
+)}
+
 Screenshot provided:
 ${request.screenshotBase64 ? "Yes, base64 image data is available in the request. Use it only as context if supported." : "No screenshot provided."}
 
@@ -58,9 +70,11 @@ Rules:
 - Prompt pack keys must match selected concept ids.
 - Copy pack keys must match selected concept ids.
 - Do not copy competitor text, layout, artwork, slogans, brand identity, or protected characters.
-- Use practical, specific US-market POD copy.`;
+- Use practical, specific US-market POD copy.
+- Never use the literal word "Other" as a product type or visual direction.
+- Use the normalized product type and normalized visual direction when productType or visualStyle is Other.`;
 
   const result = await model.generateContent(prompt);
-  const parsed = JSON.parse(extractJson(result.response.text()));
+  const parsed = JSON.parse(cleanGenericOtherLanguage(extractJson(result.response.text())));
   return StrategyResponseSchema.parse(parsed);
 }
