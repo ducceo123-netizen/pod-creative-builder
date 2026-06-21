@@ -2,6 +2,7 @@
 
 import {
   Archive,
+  Bell,
   Check,
   Clipboard,
   Download,
@@ -11,6 +12,7 @@ import {
   Library,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   Sparkles,
   Star,
@@ -31,20 +33,19 @@ import type { CopyPack } from "@/types/copyPack";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
-const tabs = ["Overview", "Custom Map", "Concepts", "Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
+const tabs = ["Analysis", "Custom Map", "Concepts", "Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
 const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
 const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
 const CURRENT_DRAFT_ID_KEY = "pod-current-draft-id";
 const navItems: Array<[string, LucideIcon, boolean]> = [
   ["Dashboard", Home, false],
-  ["Product Brief", Plus, false],
-  ["Concepts", Archive, false],
-  ["Prompts", Library, false],
-  ["Creative Assets", Layers3, false],
-  ["Shopify Copy", Layers3, false],
-  ["Meta Ads", Sparkles, false],
-  ["Export", FileJson, false],
+  ["Projects", Archive, false],
+  ["Competitor Briefs", Plus, false],
+  ["Creative Generator", Sparkles, false],
+  ["Drafts", Library, false],
+  ["Prompt Library", Layers3, false],
+  ["Exports", FileJson, false],
   ["Settings", Settings, false],
 ];
 
@@ -377,7 +378,7 @@ function CopyButton({ value, onCopied, label = "Copy" }: { value: string; onCopi
         window.setTimeout(() => setCopied(false), 1200);
         onCopied();
       }}
-      className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted"
+      className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted"
     >
       <Clipboard size={14} />
       {copied ? "Copied" : label}
@@ -518,8 +519,8 @@ export default function PodCreativeBuilder() {
   const [concepts, setConcepts] = useState<Concept[]>(() => getCurrentDraft()?.concepts || []);
   const [promptPacks, setPromptPacks] = useState<Record<string, PromptPack>>(() => getCurrentDraft()?.promptPacks || {});
   const [copyPacks, setCopyPacks] = useState<Record<string, CopyPack>>(() => getCurrentDraft()?.copyPacks || {});
-  const [activeTab, setActiveTab] = useState("Overview");
-  const [activeView, setActiveView] = useState<AppView>("Product Brief");
+  const [activeTab, setActiveTab] = useState("Analysis");
+  const [activeView, setActiveView] = useState<AppView>("Dashboard");
   const [toast, setToast] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState("");
@@ -553,7 +554,7 @@ export default function PodCreativeBuilder() {
   const visibleTabs = useMemo(
     () =>
       tabs.filter((tab) => {
-        if (tab === "Overview") return outputFlags.productBreakdown;
+        if (tab === "Analysis") return outputFlags.productBreakdown;
         if (tab === "Custom Map") return outputFlags.customMap;
         if (tab === "Concepts") return outputFlags.concepts;
         if (tab === "Prompts") return outputFlags.designPrompts || outputFlags.mockupPrompts;
@@ -565,7 +566,7 @@ export default function PodCreativeBuilder() {
       }),
     [outputFlags],
   );
-  const displayedActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] || "Overview";
+  const displayedActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] || "Analysis";
   const readiness = useMemo(() => getReadiness(project, screenshot), [project, screenshot]);
   const hasGeneratedPack = Boolean(analysis);
   const markdown = useMemo(() => {
@@ -679,7 +680,7 @@ export default function PodCreativeBuilder() {
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
     if (screenshot) localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
     setHasUnsavedChanges(false);
-    setActiveTab(visibleTabs[0] || "Overview");
+    setActiveTab(visibleTabs[0] || "Analysis");
     setToast("Creative pack generated");
     window.setTimeout(() => setToast(""), 1600);
     window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -797,7 +798,7 @@ export default function PodCreativeBuilder() {
     setVersions(draft.versions || []);
     setStrategySource(getSourceLabel(draft.generationMeta));
     setActiveView("Product Brief");
-    setActiveTab(draft.analysis ? "Overview" : "Overview");
+    setActiveTab("Analysis");
     setHasUnsavedChanges(false);
     setToast("Draft opened");
     window.setTimeout(() => setToast(""), 1400);
@@ -880,7 +881,7 @@ export default function PodCreativeBuilder() {
     setConcepts([]);
     setPromptPacks({});
     setCopyPacks({});
-    setActiveTab("Overview");
+    setActiveTab("Analysis");
     setStrategySource("");
     setGenerationError("");
     setScreenshot(null);
@@ -964,7 +965,7 @@ export default function PodCreativeBuilder() {
   };
 
   const openNav = (label: string) => {
-    if (label === "Dashboard") {
+    if (label === "Dashboard" || label === "Projects" || label === "Drafts") {
       setActiveView("Dashboard");
       return;
     }
@@ -973,79 +974,114 @@ export default function PodCreativeBuilder() {
       return;
     }
     setActiveView("Product Brief");
-    if (label === "Product Brief") {
+    if (label === "Competitor Briefs" || label === "Creative Generator") {
       document.getElementById("product-brief")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    setActiveTab(label === "Shopify Copy" ? "Shopify Copy" : label);
+    if (label === "Prompt Library") setActiveTab("Prompts");
+    else if (label === "Exports") setActiveTab("Export");
+    else setActiveTab(label === "Shopify Copy" ? "Shopify Copy" : label);
     outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const isNavActive = (label: string) => {
+    if (label === "Dashboard" || label === "Projects" || label === "Drafts") return activeView === "Dashboard";
+    if (label === "Competitor Briefs" || label === "Creative Generator") return activeView === "Product Brief";
+    if (label === "Prompt Library") return activeView === "Product Brief" && displayedActiveTab === "Prompts";
+    if (label === "Exports") return activeView === "Product Brief" && displayedActiveTab === "Export";
+    if (label === "Settings") return activeView === "Settings";
+    return false;
+  };
+
+  const useSampleBrief = () => {
+    setProject((current) => ({
+      ...current,
+      productTitle: "Custom Photo Poke Dad Bod Belly - Personalized Squishy Acrylic Fridge Magnet",
+      competitorBrand: "Wander Prints",
+      productDescription:
+        "A funny personalized squishy acrylic fridge magnet. Customers upload a photo of dad, husband, boyfriend, or grandpa and the product turns him into a playful dad-bod character with a soft pokeable belly.",
+      productType: "Squishy Acrylic Fridge Magnet",
+      buyerPersona: "Dad",
+      occasion: "Father's Day",
+      niche: "Funny personalized dad gift, husband gift, Father's Day gift, family humor gift",
+      visualStyle: ["Funny Custom Character"],
+      brandVoice: ["Fun", "Gift-focused", "US-market natural"],
+      outputs: OUTPUT_REQUESTS,
+      updatedAt: new Date().toISOString(),
+    }));
+    setHasUnsavedChanges(true);
+    setToast("Sample brief loaded");
+    window.setTimeout(() => setToast(""), 1400);
   };
 
   return (
     <main className="min-h-screen bg-background text-primary">
-      <header className="sticky top-0 z-30 border-b border-border bg-white">
-        <div className="flex min-h-[72px] flex-wrap items-center justify-between gap-3 px-4 py-4 md:flex-nowrap md:px-6">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-full bg-primary text-white">
+      <header className="sticky top-0 z-30 border-b border-[#3d3d3d] bg-[#1f1f1f] text-white">
+        <div className="flex min-h-[64px] flex-wrap items-center justify-between gap-3 px-4 py-3 md:flex-nowrap md:px-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-lg bg-white text-primary">
               <Sparkles size={18} />
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-base font-medium">POD Creative Builder</span>
-              <span className="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-secondary">MVP</span>
-              <span className="hidden rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-secondary md:inline-flex">
-                {getDraftStatus(project, analysis, concepts)}
-              </span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-5">POD Builder</div>
+              <div className="truncate text-xs text-zinc-400">{currentDraftId ? getDraftTitle(project) : "Default Project"}</div>
             </div>
           </div>
 
-          <nav className="hidden items-center gap-1 text-sm font-medium text-secondary lg:flex">
-            {["Competitor Brief", "Creative Pack", "Export"].map((item, index) => (
-              <span key={item} className="inline-flex items-center gap-1 rounded-full px-3 py-2">
-                {index > 0 ? <span className="text-muted">→</span> : null}
-                <span>{item}</span>
-              </span>
-            ))}
-          </nav>
+          <label className="relative hidden w-full max-w-xl md:block">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <input
+              className="h-9 w-full rounded-lg border border-[#4a4a4a] bg-[#2b2b2b] pl-9 pr-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#005bd3]"
+              placeholder="Search projects, competitors, prompts..."
+            />
+          </label>
 
           <div className="flex items-center gap-2">
-            <button type="button" onClick={saveDraft} className="focus-ring inline-flex h-10 items-center rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted sm:h-11 sm:px-5 sm:text-sm">
-              Save Draft
+            <span className={cx("hidden rounded-full px-3 py-1 text-xs font-semibold md:inline-flex", generationMeta?.fallbackUsed ? "bg-[#fff4ce] text-[#8a6116]" : generationMeta?.usedAI ? "bg-[#e3f1df] text-[#108043]" : "bg-[#2b2b2b] text-zinc-300")}>
+              {generationMeta?.usedAI ? "Groq connected" : generationMeta?.fallbackUsed ? "Local fallback" : "Not generated"}
+            </span>
+            <button type="button" className="grid h-9 w-9 place-items-center rounded-lg border border-[#4a4a4a] bg-[#2b2b2b] text-zinc-200">
+              <Bell size={16} />
             </button>
-            <button type="button" onClick={generateStrategy} disabled={isGenerating} className="focus-ring inline-flex h-10 items-center gap-2 rounded-full bg-primary px-3 text-xs font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70 sm:h-11 sm:px-5 sm:text-sm">
-              <Sparkles size={16} className={isGenerating ? "animate-pulse" : ""} />
-              {isGenerating ? "Generating..." : "Generate Strategy"}
-            </button>
+            <div className="grid h-9 w-9 place-items-center rounded-lg bg-zinc-100 text-sm font-semibold text-primary">DN</div>
           </div>
         </div>
       </header>
 
       <div className="flex min-h-[calc(100vh-72px)]">
-        <aside className="hidden w-[260px] shrink-0 border-r border-border bg-background p-4 lg:block">
-          <nav className="sticky top-24 space-y-1">
+        <aside className="hidden w-[240px] shrink-0 border-r border-border bg-[#ebebeb] p-3 lg:flex lg:flex-col">
+          <nav className="sticky top-20 flex min-h-[calc(100vh-88px)] flex-col">
+            <div className="space-y-1">
             {navItems.map(([label, Icon, comingSoon]) => (
               <button
                 type="button"
                 key={label}
                 onClick={() => openNav(label)}
                 className={cx(
-                  "focus-ring flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium",
-                  (activeView === label || (activeView === "Product Brief" && label === "Product Brief") || displayedActiveTab === label)
-                    ? "border border-black/10 bg-accent text-primary"
+                  "focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm",
+                  isNavActive(label)
+                    ? "bg-white font-semibold text-primary shadow-[0_1px_0_rgba(0,0,0,0.04)]"
                     : "text-secondary hover:bg-white",
                 )}
               >
                 <Icon size={16} />
                 <span className="min-w-0 flex-1 text-left">{label}</span>
-                {label === "Product Brief" && hasUnsavedChanges ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-primary">Draft</span> : null}
-                {label === "Concepts" && hasGeneratedPack ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-primary">Ready</span> : null}
-                {comingSoon ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-secondary">Soon</span> : null}
+                {label === "Competitor Briefs" && hasUnsavedChanges ? <span className="rounded-lg bg-white px-2 py-0.5 text-[10px] font-medium text-primary">Draft</span> : null}
+                {label === "Creative Generator" && hasGeneratedPack ? <span className="rounded-lg bg-white px-2 py-0.5 text-[10px] font-medium text-primary">Ready</span> : null}
+                {comingSoon ? <span className="rounded-lg bg-white px-2 py-0.5 text-[10px] font-medium text-secondary">Soon</span> : null}
               </button>
             ))}
+            </div>
+            <div className="mt-auto rounded-xl border border-[#cce0ff] bg-[#eaf4ff] p-4">
+              <h4 className="text-sm font-semibold text-primary">Need more generations?</h4>
+              <p className="mt-1 text-xs leading-5 text-secondary">Upgrade for image creative workflows.</p>
+              <span className="mt-3 inline-flex rounded-lg border border-[#b5d6ff] bg-white px-3 py-1 text-xs font-semibold text-[#005bd3]">Coming soon</span>
+            </div>
           </nav>
         </aside>
 
-        <section className="min-w-0 flex-1 px-4 py-8 md:px-8 lg:py-12">
-          <div className="mx-auto max-w-[1320px] space-y-8">
+        <section className="min-w-0 flex-1 px-4 py-6 md:px-8 lg:py-8">
+          <div className="mx-auto max-w-[1200px] space-y-6">
             <nav className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
               {navItems.map(([label, Icon, comingSoon]) => (
                 <button
@@ -1054,7 +1090,7 @@ export default function PodCreativeBuilder() {
                   onClick={() => openNav(label)}
                   className={cx(
                     "focus-ring inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium",
-                    (activeView === label || displayedActiveTab === label) ? "border-black/10 bg-accent text-primary" : "border-border bg-white text-secondary",
+                    isNavActive(label) ? "border-black/10 bg-accent text-primary" : "border-border bg-white text-secondary",
                   )}
                 >
                   <Icon size={15} />
@@ -1076,48 +1112,59 @@ export default function PodCreativeBuilder() {
               <SettingsView health={health} generationMeta={generationMeta} onRefresh={openSettings} />
             ) : (
               <>
-                <section className="max-w-4xl">
-                  <p className="mb-4 text-xs font-medium uppercase tracking-[0.06em] text-secondary">POD Creative Workflow</p>
-                  <h1 className="page-title">Build custom POD products from competitor signals.</h1>
-                  <p className="mt-5 max-w-[720px] text-base leading-7 text-secondary md:text-lg">
-                    Turn a competitor product into original custom angles, design prompts, Shopify copy, and Meta ad concepts without copying the original artwork.
-                  </p>
+                <section className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <p className="mb-2 text-xs font-medium uppercase tracking-[0.06em] text-secondary">Creative Generator</p>
+                    <h1 className="page-title">Creative Generator</h1>
+                    <p className="mt-2 max-w-[720px] text-sm leading-6 text-secondary">
+                      Turn competitor POD products into original Shopify-ready product concepts.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={saveDraft} className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
+                      Save Draft
+                    </button>
+                    <button type="button" onClick={generateStrategy} disabled={isGenerating} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70 disabled:opacity-70">
+                      {isGenerating ? "Generating with Groq..." : "Generate Strategy"}
+                    </button>
+                  </div>
                 </section>
 
-            <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-              <BriefForm
-                project={project}
-                screenshot={screenshot}
-                updateProject={updateProject}
-                updateScreenshot={updateScreenshotDraft}
-                onGenerate={generateStrategy}
-                onSaveDraft={saveDraft}
-                onClearDraft={clearDraft}
-                isGenerating={isGenerating}
-                clearNeedsConfirm={clearNeedsConfirm}
-              />
+            <section className="grid gap-5 xl:grid-cols-[minmax(360px,0.42fr)_minmax(0,0.58fr)]">
+              <div className="space-y-5">
+                <BriefForm
+                  project={project}
+                  screenshot={screenshot}
+                  updateProject={updateProject}
+                  updateScreenshot={updateScreenshotDraft}
+                  onGenerate={generateStrategy}
+                  onSaveDraft={saveDraft}
+                  onClearDraft={clearDraft}
+                  isGenerating={isGenerating}
+                  clearNeedsConfirm={clearNeedsConfirm}
+                />
 
-              <BriefSummary
-                project={project}
-                screenshot={screenshot}
-                analysis={analysis}
-                selectedCount={selectedConcepts.length}
-                onGenerate={generateStrategy}
-                isGenerating={isGenerating}
-                readiness={readiness}
-              />
-            </section>
+                <BriefSummary
+                  project={project}
+                  screenshot={screenshot}
+                  analysis={analysis}
+                  selectedCount={selectedConcepts.length}
+                  onGenerate={generateStrategy}
+                  isGenerating={isGenerating}
+                  readiness={readiness}
+                />
+              </div>
 
-            <section ref={outputRef} className="scroll-mt-24 rounded-xl border border-border bg-white">
+            <section ref={outputRef} className="min-w-0 scroll-mt-24 rounded-xl border border-border bg-white shadow-[0_1px_0_rgba(0,0,0,0.04)]">
               <div className="overflow-x-auto border-b border-border p-3">
-                <div className="flex min-w-max items-center gap-2">
+                <div className="flex min-w-max items-center gap-1">
                   {visibleTabs.map((tab) => (
                     <button
                       type="button"
                       key={tab}
                       onClick={() => setActiveTab(tab)}
                       className={cx(
-                        "focus-ring rounded-full px-4 py-2 text-sm font-medium",
+                        "focus-ring rounded-lg px-3 py-2 text-sm font-semibold",
                         displayedActiveTab === tab ? "bg-primary text-white" : "text-secondary hover:bg-surface-muted hover:text-primary",
                       )}
                     >
@@ -1128,7 +1175,7 @@ export default function PodCreativeBuilder() {
                     <select
                       value={activeVersionId}
                       onChange={(event) => restoreVersion(event.target.value)}
-                      className="focus-ring ml-2 h-10 rounded-full border border-border bg-white px-3 text-sm font-medium text-secondary"
+                      className="focus-ring ml-2 h-10 rounded-lg border border-border bg-white px-3 text-sm font-medium text-secondary"
                     >
                       <option value="">Versions</option>
                       {versions.map((version) => (
@@ -1144,9 +1191,25 @@ export default function PodCreativeBuilder() {
                 {isGenerating ? (
                   <LoadingState />
                 ) : !analysis ? (
-                  <EmptyState onGenerate={generateStrategy} isGenerating={isGenerating} />
+                  <EmptyState onGenerate={generateStrategy} onUseSample={useSampleBrief} isGenerating={isGenerating} />
                 ) : (
                   <>
+                    <div className="mb-5 rounded-xl border border-border bg-surface-muted p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <h2 className="text-lg font-semibold">{project.productTitle || project.name || "Generated creative pack"}</h2>
+                          <p className="mt-1 text-sm text-secondary">Review analysis, selected concepts, prompts, Shopify copy, ads, and export packages.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded-full bg-[#eaf4ff] px-3 py-1 text-xs font-semibold text-[#005bd3]">{normalizeProject(project).normalizedProductType}</span>
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-secondary">{project.buyerPersona || "Buyer not set"}</span>
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-secondary">{project.occasion || "Occasion not set"}</span>
+                          <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", generationMeta?.fallbackUsed ? "bg-[#fff4ce] text-[#8a6116]" : "bg-[#e3f1df] text-[#108043]")}>
+                            {generationMeta?.fallbackUsed ? "Local fallback used" : "Generated with Groq"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                     {generationError ? (
                       <div className="mb-5 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-warning">
                         API generation failed, so a local fallback was used. {generationError}
@@ -1155,7 +1218,7 @@ export default function PodCreativeBuilder() {
                     {strategySource ? (
                       <p className="mb-4 text-xs font-medium uppercase tracking-[0.06em] text-secondary">Generated via {strategySource}</p>
                     ) : null}
-                    {displayedActiveTab === "Overview" && <OverviewTab analysis={analysis} onCopied={showCopied} />}
+                    {displayedActiveTab === "Analysis" && <OverviewTab analysis={analysis} onCopied={showCopied} />}
                     {displayedActiveTab === "Custom Map" && <CustomMapTab analysis={analysis} onCopied={showCopied} />}
                     {displayedActiveTab === "Concepts" && (
                       <ConceptsTab
@@ -1204,12 +1267,13 @@ export default function PodCreativeBuilder() {
                 )}
               </div>
             </section>
+            </section>
               </>
             )}
           </div>
         </section>
       </div>
-      {toast ? <div className="fixed bottom-5 right-5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-white shadow-soft">{toast}</div> : null}
+      {toast ? <div className="fixed bottom-5 right-5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-soft">{toast}</div> : null}
     </main>
   );
 }
@@ -1237,19 +1301,80 @@ function DashboardView({
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Dashboard</p>
-          <h1 className="mt-2 text-4xl font-medium">Saved POD drafts</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Open, duplicate, archive, or delete local drafts. Drafts stay in this browser until you clear them.</p>
+          <h1 className="mt-2 text-[28px] font-semibold">Dashboard</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Create POD product strategy packs from competitor references.</p>
         </div>
-        <button type="button" onClick={onCreate} className="focus-ring inline-flex h-11 items-center justify-center rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
+        <div className="flex gap-2">
+        <button type="button" onClick={onCreate} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">
           Create new draft
         </button>
+        <button type="button" className="focus-ring inline-flex h-9 items-center justify-center rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
+          Import Brief
+        </button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="rounded-xl border border-border bg-white p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Create a POD creative pack</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">
+                Add a competitor product, define the buyer and occasion, then generate concepts, prompts, Shopify copy, and Meta ad hooks.
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-2">
+            {["Brief", "Strategy", "Creative Pack", "Export"].map((item) => (
+              <span key={item} className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm font-semibold text-secondary">{item}</span>
+            ))}
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-4">
+            {[
+              "Add competitor product",
+              "Define product type and buyer",
+              "Generate strategy with Groq",
+              "Review and export creative pack",
+            ].map((item, index) => (
+              <div key={item} className="rounded-xl border border-border bg-surface-muted p-4">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-accent text-xs font-semibold text-success">{index + 1}</span>
+                <p className="mt-3 text-sm font-semibold">{item}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border bg-white p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+            <h3 className="text-base font-semibold">Quick actions</h3>
+            <div className="mt-4 grid gap-2">
+              <button type="button" onClick={onCreate} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">New Project</button>
+              <button type="button" className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Save Draft</button>
+              <button type="button" className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Export Markdown</button>
+              <button type="button" className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Export JSON</button>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-white p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+            <h3 className="text-base font-semibold">Generation status</h3>
+            <dl className="mt-4 space-y-3 text-sm">
+              <Detail label="Recent drafts" value={`${visibleDrafts.length}`} />
+              <Detail label="Generated drafts" value={`${visibleDrafts.filter((draft) => draft.generationMeta).length}`} />
+              <Detail label="Export readiness" value={visibleDrafts.some((draft) => draft.status === "selected") ? "Ready" : "Draft"} />
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold">Recent drafts</h2>
+        <p className="mt-1 text-sm text-secondary">Open, duplicate, archive, or delete local drafts. Drafts stay in this browser until cleared.</p>
       </div>
 
       {!visibleDrafts.length ? (
         <div className="rounded-xl border border-dashed border-border bg-white p-10 text-center">
           <h3 className="text-2xl font-medium">No saved drafts yet.</h3>
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">Create a product brief, generate a pack, then save it here for comparison and later edits.</p>
-          <button type="button" onClick={onCreate} className="focus-ring mt-5 inline-flex h-11 items-center rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
+          <button type="button" onClick={onCreate} className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
             Create new draft
           </button>
         </div>
@@ -1273,26 +1398,26 @@ function DashboardView({
               <div className="mt-4 flex flex-wrap gap-2">
                 <span
                   title={getSourceHelp(draft.generationMeta)}
-                  className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary"
+                  className="rounded-lg border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary"
                 >
                   Generated by {getSourceLabel(draft.generationMeta)}
                 </span>
-                {draft.versions?.length ? <span className="rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{draft.versions.length} versions</span> : null}
+                {draft.versions?.length ? <span className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{draft.versions.length} versions</span> : null}
               </div>
               {draft.generationMeta?.fallbackUsed ? (
                 <p className="mt-2 text-xs leading-5 text-secondary">This draft was generated with the local template. Regenerate after Groq is connected to create an AI version.</p>
               ) : null}
               <div className="mt-5 flex flex-wrap gap-2">
-                <button type="button" onClick={() => onOpen(draft)} className="focus-ring inline-flex h-10 items-center rounded-full bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70">
+                <button type="button" onClick={() => onOpen(draft)} className="focus-ring inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70">
                   Open
                 </button>
-                <button type="button" onClick={() => onDuplicate(draft)} className="focus-ring inline-flex h-10 items-center rounded-full border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+                <button type="button" onClick={() => onDuplicate(draft)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
                   Duplicate
                 </button>
-                <button type="button" onClick={() => onArchive(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-full border border-border bg-white px-4 text-sm font-medium text-secondary hover:bg-surface-muted">
+                <button type="button" onClick={() => onArchive(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-border bg-white px-4 text-sm font-medium text-secondary hover:bg-surface-muted">
                   Archive
                 </button>
-                <button type="button" onClick={() => onDelete(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-full border border-border bg-white px-4 text-sm font-medium text-danger hover:bg-red-50">
+                <button type="button" onClick={() => onDelete(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-border bg-white px-4 text-sm font-medium text-danger hover:bg-red-50">
                   Delete
                 </button>
               </div>
@@ -1323,7 +1448,7 @@ function SettingsView({
           <h1 className="mt-2 text-4xl font-medium">API status</h1>
           <p className="mt-2 text-sm leading-6 text-secondary">Provider status is checked server-side without exposing API keys.</p>
         </div>
-        <button type="button" onClick={onRefresh} className="focus-ring inline-flex h-11 items-center rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
+        <button type="button" onClick={onRefresh} className="focus-ring inline-flex h-11 items-center rounded-lg border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
           Refresh status
         </button>
       </div>
@@ -1425,7 +1550,7 @@ function BriefForm({
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-secondary">
                   <span className="font-semibold text-primary">{screenshot.name}</span>
                   <span>{formatFileSize(screenshot.size)}</span>
-                  <button type="button" onClick={() => updateScreenshot(null)} className="focus-ring inline-flex h-8 items-center gap-1 rounded-full border border-border bg-white px-3 font-semibold text-primary">
+                  <button type="button" onClick={() => updateScreenshot(null)} className="focus-ring inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-white px-3 font-semibold text-primary">
                     <X size={13} />
                     Remove
                   </button>
@@ -1545,14 +1670,14 @@ function BriefForm({
       </FormSection>
 
       <div className="flex flex-wrap justify-end gap-3">
-        <button type="button" onClick={onClearDraft} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
+        <button type="button" onClick={onClearDraft} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
           {clearNeedsConfirm ? "Confirm clear?" : "Clear Draft"}
         </button>
-        <button type="button" onClick={onSaveDraft} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
+        <button type="button" onClick={onSaveDraft} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
           <Check size={17} />
           Save Draft
         </button>
-        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <Sparkles size={17} className={isGenerating ? "animate-pulse" : ""} />
           {isGenerating ? "Generating..." : "Generate Strategy"}
         </button>
@@ -1625,7 +1750,7 @@ function BriefSummary({
               {readiness.completed}/{readiness.total} complete
             </p>
           </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
+          <div className="mt-3 h-2 overflow-hidden rounded-lg bg-white/80">
             <div className={cx("h-full rounded-full", ready ? "bg-primary" : "bg-shade-70")} style={{ width: `${readiness.score}%` }} />
           </div>
         </div>
@@ -1647,7 +1772,7 @@ function BriefSummary({
             </ul>
           </div>
         ) : null}
-        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <RefreshCw size={16} className={isGenerating ? "animate-spin" : ""} />
           {isGenerating ? "Generating..." : "Generate Strategy"}
         </button>
@@ -1667,14 +1792,14 @@ function BriefSummary({
   );
 }
 
-function EmptyState({ onGenerate, isGenerating }: { onGenerate: () => void; isGenerating: boolean }) {
+function EmptyState({ onGenerate, onUseSample, isGenerating }: { onGenerate: () => void; onUseSample: () => void; isGenerating: boolean }) {
   return (
     <div className="rounded-xl border border-dashed border-border bg-surface-muted px-5 py-12 text-center md:px-8">
       <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Creative Pack</p>
       <Sparkles className="mx-auto mt-4 text-primary" size={30} />
-      <h3 className="mt-4 text-2xl font-medium">Your product strategy will appear here.</h3>
+      <h3 className="mt-4 text-2xl font-medium">Your creative pack will appear here</h3>
       <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-secondary">
-        Add a competitor signal, choose a buyer and occasion, then generate a pack with angles, prompts, Shopify copy, and Meta ad ideas.
+        Add a competitor product and generate a strategy pack to review concepts, prompts, Shopify copy, and ads.
       </p>
       <div className="mx-auto mt-6 grid max-w-3xl gap-3 md:grid-cols-3">
         {["Custom fields map", "Design + mockup prompts", "Shopify + Meta copy"].map((item) => (
@@ -1683,10 +1808,15 @@ function EmptyState({ onGenerate, isGenerating }: { onGenerate: () => void; isGe
           </div>
         ))}
       </div>
-      <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
-        <Sparkles size={16} className={isGenerating ? "animate-pulse" : ""} />
-        {isGenerating ? "Generating..." : "Generate Strategy"}
-      </button>
+      <div className="mt-5 flex flex-wrap justify-center gap-2">
+        <button type="button" onClick={onUseSample} className="focus-ring inline-flex h-9 items-center rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
+          Use sample dad magnet brief
+        </button>
+        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+          <Sparkles size={16} className={isGenerating ? "animate-pulse" : ""} />
+          {isGenerating ? "Generating..." : "Generate Strategy"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1703,7 +1833,7 @@ function LoadingState() {
   return (
     <div className="rounded-xl border border-border bg-surface-muted p-6 md:p-8">
       <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-full bg-primary text-white">
+        <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary text-white">
           <Sparkles size={18} className="animate-pulse" />
         </div>
         <div>
@@ -1713,7 +1843,7 @@ function LoadingState() {
       </div>
       <div className="mt-6 grid gap-3">
         {steps.map((step, index) => (
-          <div key={step} className="flex items-center gap-3 rounded-full border border-border bg-white px-4 py-3 text-sm font-medium text-primary">
+          <div key={step} className="flex items-center gap-3 rounded-lg border border-border bg-white px-4 py-3 text-sm font-medium text-primary">
             <span className={cx("grid h-6 w-6 place-items-center rounded-full text-xs", index === 0 ? "bg-primary text-white" : "bg-accent text-primary")}>
               {index + 1}
             </span>
@@ -1730,7 +1860,7 @@ function OverviewTab({ analysis, onCopied }: { analysis: Analysis; onCopied: () 
   return (
     <div className="space-y-5">
       <TabIntro
-        eyebrow="Overview"
+        eyebrow="Analysis"
         title="Product strategy overview"
         description="Use this as the strategic brief before designing, listing, or advertising the product."
         action={<CopyButton value={JSON.stringify(analysis, null, 2)} onCopied={onCopied} label="Copy tab" />}
@@ -1844,7 +1974,7 @@ function ConceptsTab({
         action={
           <>
             <CopyButton value={JSON.stringify(concepts, null, 2)} onCopied={onCopied} label="Copy tab" />
-            <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-full border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+            <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
               <RefreshCw size={16} />
               Regenerate
             </button>
@@ -1852,7 +1982,7 @@ function ConceptsTab({
         }
       />
       <div className="hidden justify-end">
-        <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-full border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+        <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
           <RefreshCw size={16} />
           Regenerate concepts
         </button>
@@ -1865,7 +1995,7 @@ function ConceptsTab({
                 <h3 className="text-xl font-medium">{concept.name}</h3>
                 <p className="mt-2 text-sm leading-6 text-secondary">{concept.oneLineIdea}</p>
               </div>
-              <button type="button" onClick={() => onToggle(concept.id)} className={cx("focus-ring h-9 shrink-0 rounded-full px-4 text-xs font-medium", concept.selected ? "bg-primary text-white" : "border border-primary bg-white text-primary hover:bg-surface-muted")}>
+              <button type="button" onClick={() => onToggle(concept.id)} className={cx("focus-ring h-9 shrink-0 rounded-lg px-4 text-xs font-medium", concept.selected ? "bg-primary text-white" : "border border-primary bg-white text-primary hover:bg-surface-muted")}>
                 {concept.selected ? "Selected" : "Choose concept"}
               </button>
             </div>
@@ -1886,14 +2016,14 @@ function ConceptsTab({
                 type="button"
                 onClick={() => onUpdateExtra(concept.id, { favorite: !conceptExtras[concept.id]?.favorite })}
                 className={cx(
-                  "focus-ring inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium",
+                  "focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium",
                   conceptExtras[concept.id]?.favorite ? "border-black/10 bg-primary text-white" : "border-primary bg-white text-primary hover:bg-surface-muted",
                 )}
               >
                 <Star size={14} />
                 {conceptExtras[concept.id]?.favorite ? "Favorited" : "Favorite"}
               </button>
-              <button type="button" className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+              <button type="button" className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
                 <RefreshCw size={14} />
                 Regenerate
               </button>
@@ -2090,7 +2220,7 @@ function CreativeAssetsTab({
         action={
           <>
             <CopyButton value={promptPack} onCopied={onCopied} label="Copy prompts" />
-            <button type="button" onClick={() => onDownload("creative-asset-prompts.txt", promptPack, "text/plain")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-full border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+            <button type="button" onClick={() => onDownload("creative-asset-prompts.txt", promptPack, "text/plain")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
               <Download size={16} />
               Export prompts
             </button>
@@ -2106,8 +2236,8 @@ function CreativeAssetsTab({
               {plans.map((asset) => (
                 <article key={asset.id} className="rounded-xl border border-border bg-white p-5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary">{asset.type}</span>
-                    <span className="rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{asset.ratio}</span>
+                    <span className="rounded-lg border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary">{asset.type}</span>
+                    <span className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{asset.ratio}</span>
                     <span className={cx("rounded-full border px-3 py-1 text-xs font-medium", asset.status === "approved" ? "border-black/10 bg-accent text-primary" : "border-border bg-surface-muted text-secondary")}>
                       {asset.status}
                     </span>
@@ -2116,10 +2246,10 @@ function CreativeAssetsTab({
                   <p className="mt-2 max-h-32 overflow-auto text-sm leading-6 text-secondary">{asset.prompt}</p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <CopyButton value={asset.prompt} onCopied={onCopied} label="Copy prompt" />
-                    <button type="button" disabled className="inline-flex h-9 cursor-not-allowed items-center rounded-full border border-border bg-surface-muted px-3 text-xs font-medium text-secondary">
+                    <button type="button" disabled className="inline-flex h-9 cursor-not-allowed items-center rounded-lg border border-border bg-surface-muted px-3 text-xs font-medium text-secondary">
                       Provider not configured
                     </button>
-                    <button type="button" onClick={() => onApprove(asset.id)} className="focus-ring inline-flex h-9 items-center rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                    <button type="button" onClick={() => onApprove(asset.id)} className="focus-ring inline-flex h-9 items-center rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
                       {asset.status === "approved" ? "Unapprove" : "Approve"}
                     </button>
                   </div>
@@ -2212,13 +2342,13 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
       ) : null}
       <div className="flex flex-wrap gap-3">
         {flags.exportMarkdown ? (
-          <button type="button" onClick={() => onDownload("pod-creative-pack.md", markdown, "text/markdown")} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
+          <button type="button" onClick={() => onDownload("pod-creative-pack.md", markdown, "text/markdown")} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
             <Download size={17} />
             Export Markdown
           </button>
         ) : null}
         {flags.exportJson ? (
-          <button type="button" onClick={() => onDownload("pod-creative-pack.json", jsonValue, "application/json")} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
+          <button type="button" onClick={() => onDownload("pod-creative-pack.json", jsonValue, "application/json")} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
             <FileJson size={17} />
             Export JSON
           </button>
@@ -2236,7 +2366,7 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
             <h4 className="font-medium">{label}</h4>
             <div className="mt-3 flex flex-wrap gap-2">
               <CopyButton value={value} onCopied={onCopied} label="Copy" />
-              <button type="button" onClick={() => onDownload(filename, value, type)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+              <button type="button" onClick={() => onDownload(filename, value, type)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
                 <Download size={14} />
                 Download
               </button>

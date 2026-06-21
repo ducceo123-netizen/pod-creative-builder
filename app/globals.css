@@ -4,18 +4,18 @@
 
 :root {
   --canvas-light: #ffffff;
-  --canvas-cream: #fbfbf5;
+  --canvas-cream: #f1f1f1;
   --canvas-night: #000000;
-  --ink: #000000;
-  --text-secondary: #71717a;
-  --text-tertiary: #a1a1aa;
-  --hairline-light: #e4e4e7;
-  --shade-30: #d4d4d8;
-  --shade-40: #a1a1aa;
-  --shade-50: #71717a;
-  --shade-70: #3f3f46;
-  --aloe-10: #c1fbd4;
-  --pistachio-10: #d4f9e0;
+  --ink: #202223;
+  --text-secondary: #616161;
+  --text-tertiary: #8c9196;
+  --hairline-light: #d9d9d9;
+  --shade-30: #c9c9c9;
+  --shade-40: #8c9196;
+  --shade-50: #616161;
+  --shade-70: #303030;
+  --aloe-10: #e3f1df;
+  --pistachio-10: #eaf4ff;
   --radius-xs: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -28,13 +28,13 @@
 
   --background: var(--canvas-cream);
   --surface: var(--canvas-light);
-  --surface-muted: #f4f4ef;
+  --surface-muted: #f7f7f7;
   --border: var(--hairline-light);
   --text-primary: var(--ink);
   --text-muted: var(--text-tertiary);
   --accent: var(--aloe-10);
   --accent-soft: var(--pistachio-10);
-  --success: #16a34a;
+  --success: #108043;
   --warning: #d97706;
   --danger: #dc2626;
 }
@@ -67,13 +67,13 @@ textarea {
 }
 
 .focus-ring {
-  @apply outline-none ring-2 ring-transparent transition focus:ring-black/80 focus:ring-offset-1 focus:ring-offset-background;
+  @apply outline-none ring-2 ring-transparent transition focus:ring-[#005bd3] focus:ring-offset-1 focus:ring-offset-background;
 }
 
 .page-title {
   font-family: var(--font-display);
-  font-size: clamp(44px, 6vw, 70px);
-  line-height: 1;
-  font-weight: 330;
+  font-size: clamp(26px, 3vw, 32px);
+  line-height: 1.15;
+  font-weight: 650;
   letter-spacing: 0;
 }
