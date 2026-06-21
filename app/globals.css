@@ -23,10 +23,8 @@
   --radius-pill: 9999px;
   --font-display: "Inter Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-ui: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --shadow-card-light: 0 8px 8px rgba(0,0,0,0.1),
-                       0 4px 4px rgba(0,0,0,0.1),
-                       0 2px 2px rgba(0,0,0,0.1),
-                       0 0 0 1px rgba(0,0,0,0.08);
+  --shadow-card-light: 0 14px 34px rgba(0,0,0,0.06),
+                       0 2px 8px rgba(0,0,0,0.04);
 
   --background: var(--canvas-cream);
   --surface: var(--canvas-light);

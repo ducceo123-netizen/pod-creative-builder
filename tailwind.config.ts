@@ -37,7 +37,7 @@ const config: Config = {
         danger: "#dc2626",
       },
       boxShadow: {
-        soft: "0 8px 8px rgba(0,0,0,0.1), 0 4px 4px rgba(0,0,0,0.08), 0 2px 2px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.08)",
+        soft: "0 14px 34px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.04)",
       },
     },
   },

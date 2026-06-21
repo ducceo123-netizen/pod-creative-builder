@@ -6,7 +6,6 @@ import {
   Clipboard,
   Download,
   FileJson,
-  FileText,
   Home,
   Layers3,
   Library,
@@ -14,9 +13,11 @@ import {
   RefreshCw,
   Settings,
   Sparkles,
+  Upload,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
 import { exportMarkdown } from "@/lib/exportMarkdown";
 import { createProject, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
@@ -30,6 +31,7 @@ import type { PromptPack } from "@/types/promptPack";
 
 const tabs = ["Overview", "Custom Map", "Concepts", "Prompts", "Shopify Copy", "Meta Ads", "Export"];
 const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
+const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const navItems: Array<[string, LucideIcon, boolean]> = [
   ["Dashboard", Home, false],
   ["Product Brief", Plus, false],
@@ -48,8 +50,91 @@ type ScreenshotState = {
   base64: string;
 };
 
+type ReadinessResult = {
+  score: number;
+  completed: number;
+  total: number;
+  label: "Needs brief" | "Good enough" | "Ready to generate";
+  missing: string[];
+};
+
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function createDefaultProject() {
+  return createProject({
+    name: "Untitled POD creative brief",
+    competitorBrand: "",
+    productTitle: "",
+    productDescription: "",
+    competitorUrl: "",
+    productType: "",
+    buyerPersona: "",
+    occasion: "",
+    niche: "",
+    priceRange: "",
+    brandVoice: [],
+    visualStyle: [],
+    avoidList: "",
+    userNotes: "",
+    outputs: [],
+  });
+}
+
+function hasValue(value: unknown) {
+  if (Array.isArray(value)) return value.length > 0;
+  return typeof value === "string" ? value.trim().length > 0 : Boolean(value);
+}
+
+function getReadiness(project: Project, screenshot: ScreenshotState | null): ReadinessResult {
+  const checks: Array<[boolean, string]> = [
+    [hasValue(project.competitorUrl) || hasValue(project.productDescription) || Boolean(screenshot), "Add a competitor URL, notes, or screenshot"],
+    [hasValue(project.productType), "Choose a product type"],
+    [hasValue(project.buyerPersona), "Choose a buyer"],
+    [hasValue(project.occasion), "Choose an occasion"],
+    [hasValue(project.niche), "Add a niche"],
+    [hasValue(project.brandVoice), "Pick at least one brand voice"],
+    [hasValue(project.visualStyle), "Pick at least one visual style"],
+    [(project.outputs?.length || 0) >= 3, "Select at least 3 output goals"],
+  ];
+  const completed = checks.filter(([done]) => done).length;
+  const score = Math.round((completed / checks.length) * 100);
+  return {
+    score,
+    completed,
+    total: checks.length,
+    label: score >= 80 ? "Ready to generate" : score >= 50 ? "Good enough" : "Needs brief",
+    missing: checks.filter(([done]) => !done).map(([, label]) => label),
+  };
+}
+
+function formatFileSize(size: number) {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function TabIntro({
+  eyebrow,
+  title,
+  description,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-4 border-b border-border pb-5 md:flex-row md:items-end md:justify-between">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">{eyebrow}</p>
+        <h3 className="mt-2 text-2xl font-medium text-primary">{title}</h3>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">{description}</p>
+      </div>
+      {action ? <div className="flex shrink-0 flex-wrap gap-2">{action}</div> : null}
+    </div>
+  );
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -73,18 +158,22 @@ function ScoreBadge({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CopyButton({ value, onCopied }: { value: string; onCopied: () => void }) {
+function CopyButton({ value, onCopied, label = "Copy" }: { value: string; onCopied: () => void; label?: string }) {
+  const [copied, setCopied] = useState(false);
+
   return (
     <button
       type="button"
       onClick={async () => {
         await navigator.clipboard.writeText(value);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
         onCopied();
       }}
       className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted"
     >
       <Clipboard size={14} />
-      Copy
+      {copied ? "Copied" : label}
     </button>
   );
 }
@@ -105,7 +194,9 @@ function SelectField({
       className="focus-ring min-h-11 w-full rounded-lg border border-border bg-white px-3 text-base text-primary"
     >
       {options.map((option) => (
-        <option key={option}>{option}</option>
+        <option key={option} value={option}>
+          {option || "Select one"}
+        </option>
       ))}
     </select>
   );
@@ -197,12 +288,7 @@ function PromptBlock({ title, value, onCopied }: { title: string; value: string;
 
 export default function PodCreativeBuilder() {
   const [project, setProject] = useState<Project>(() => {
-    const defaultProject = createProject({
-      name: "Pet memorial suncatcher brief",
-      competitorBrand: "Competitor store",
-      productTitle: "Custom pet memorial window ornament",
-      productDescription: "Personalized pet image keepsake with name, date, and emotional quote.",
-    });
+    const defaultProject = createDefaultProject();
 
     if (typeof window === "undefined") return defaultProject;
 
@@ -225,7 +311,21 @@ export default function PodCreativeBuilder() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState("");
   const [strategySource, setStrategySource] = useState("");
-  const [screenshot, setScreenshot] = useState<ScreenshotState | null>(null);
+  const [screenshot, setScreenshot] = useState<ScreenshotState | null>(() => {
+    if (typeof window === "undefined") return null;
+    const saved = localStorage.getItem(SCREENSHOT_DRAFT_KEY);
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as ScreenshotState;
+    } catch {
+      localStorage.removeItem(SCREENSHOT_DRAFT_KEY);
+      return null;
+    }
+  });
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [clearNeedsConfirm, setClearNeedsConfirm] = useState(false);
+  const clearConfirmTimer = useRef<number | null>(null);
+  const outputRef = useRef<HTMLElement | null>(null);
 
   const selectedConcepts = useMemo(() => concepts.filter((concept) => concept.selected), [concepts]);
   const outputFlags = useMemo(() => getOutputFlags(project), [project]);
@@ -244,6 +344,8 @@ export default function PodCreativeBuilder() {
     [outputFlags],
   );
   const displayedActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] || "Overview";
+  const readiness = useMemo(() => getReadiness(project, screenshot), [project, screenshot]);
+  const hasGeneratedPack = Boolean(analysis);
   const markdown = useMemo(
     () => exportMarkdown({ project, analysis, concepts, prompts: promptPacks, copies: copyPacks, flags: outputFlags }),
     [analysis, concepts, copyPacks, outputFlags, project, promptPacks],
@@ -267,6 +369,12 @@ export default function PodCreativeBuilder() {
 
   const updateProject = <K extends keyof Project>(key: K, value: Project[K]) => {
     setProject((current) => ({ ...current, [key]: value, updatedAt: new Date().toISOString() }));
+    setHasUnsavedChanges(true);
+  };
+
+  const updateScreenshotDraft = (nextScreenshot: ScreenshotState | null) => {
+    setScreenshot(nextScreenshot);
+    setHasUnsavedChanges(true);
   };
 
   const showCopied = () => {
@@ -282,9 +390,13 @@ export default function PodCreativeBuilder() {
     setStrategySource(source);
     setProject((current) => ({ ...current, status: "generated", name: current.productTitle || current.name }));
     setActiveTab(visibleTabs[0] || "Overview");
+    setToast("Creative pack generated");
+    window.setTimeout(() => setToast(""), 1600);
+    window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
 
   const generateStrategy = async () => {
+    if (isGenerating) return;
     setIsGenerating(true);
     setGenerationError("");
 
@@ -331,12 +443,40 @@ export default function PodCreativeBuilder() {
 
   const saveDraft = () => {
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(project));
+    if (screenshot) {
+      localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
+    } else {
+      localStorage.removeItem(SCREENSHOT_DRAFT_KEY);
+    }
+    setHasUnsavedChanges(false);
     setToast("Draft saved");
     window.setTimeout(() => setToast(""), 1400);
   };
 
   const clearDraft = () => {
+    if (!clearNeedsConfirm) {
+      setClearNeedsConfirm(true);
+      if (clearConfirmTimer.current) window.clearTimeout(clearConfirmTimer.current);
+      clearConfirmTimer.current = window.setTimeout(() => setClearNeedsConfirm(false), 3500);
+      setToast("Click clear again to confirm");
+      window.setTimeout(() => setToast(""), 1400);
+      return;
+    }
+
+    if (clearConfirmTimer.current) window.clearTimeout(clearConfirmTimer.current);
     localStorage.removeItem(PROJECT_DRAFT_KEY);
+    localStorage.removeItem(SCREENSHOT_DRAFT_KEY);
+    setProject(createDefaultProject());
+    setAnalysis(null);
+    setConcepts([]);
+    setPromptPacks({});
+    setCopyPacks({});
+    setActiveTab("Overview");
+    setStrategySource("");
+    setGenerationError("");
+    setScreenshot(null);
+    setHasUnsavedChanges(false);
+    setClearNeedsConfirm(false);
     setToast("Draft cleared");
     window.setTimeout(() => setToast(""), 1400);
   };
@@ -370,7 +510,7 @@ export default function PodCreativeBuilder() {
   return (
     <main className="min-h-screen bg-background text-primary">
       <header className="sticky top-0 z-30 border-b border-border bg-white">
-        <div className="flex min-h-[72px] items-center justify-between gap-4 px-4 py-4 md:px-6">
+        <div className="flex min-h-[72px] flex-wrap items-center justify-between gap-3 px-4 py-4 md:flex-nowrap md:px-6">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-full bg-primary text-white">
               <Sparkles size={18} />
@@ -381,21 +521,22 @@ export default function PodCreativeBuilder() {
             </div>
           </div>
 
-          <nav className="hidden items-center gap-2 lg:flex">
-            {["Competitor Brief", "Creative Pack", "Export"].map((item) => (
-              <span key={item} className="rounded-full px-4 py-2 text-sm font-medium text-secondary">
-                {item}
+          <nav className="hidden items-center gap-1 text-sm font-medium text-secondary lg:flex">
+            {["Competitor Brief", "Creative Pack", "Export"].map((item, index) => (
+              <span key={item} className="inline-flex items-center gap-1 rounded-full px-3 py-2">
+                {index > 0 ? <span className="text-muted">→</span> : null}
+                <span>{item}</span>
               </span>
             ))}
           </nav>
 
           <div className="flex items-center gap-2">
-            <button type="button" onClick={saveDraft} className="focus-ring hidden h-11 items-center rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted sm:inline-flex">
+            <button type="button" onClick={saveDraft} className="focus-ring inline-flex h-10 items-center rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted sm:h-11 sm:px-5 sm:text-sm">
               Save Draft
             </button>
-            <button type="button" onClick={generateStrategy} disabled={isGenerating} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+            <button type="button" onClick={generateStrategy} disabled={isGenerating} className="focus-ring inline-flex h-10 items-center gap-2 rounded-full bg-primary px-3 text-xs font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70 sm:h-11 sm:px-5 sm:text-sm">
               <Sparkles size={16} className={isGenerating ? "animate-pulse" : ""} />
-              {isGenerating ? "Building..." : "Generate Strategy"}
+              {isGenerating ? "Generating..." : "Generate Strategy"}
             </button>
           </div>
         </div>
@@ -408,6 +549,13 @@ export default function PodCreativeBuilder() {
               <button
                 type="button"
                 key={label}
+                onClick={() => {
+                  if (label === "Product Brief") document.getElementById("product-brief")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  if (["Concepts", "Prompts", "Shopify Copy", "Meta Ads", "Export"].includes(label)) {
+                    setActiveTab(label === "Shopify Copy" ? "Shopify Copy" : label);
+                    outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }
+                }}
                 className={cx(
                   "focus-ring flex w-full items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium",
                   label === "Product Brief" ? "border border-black/10 bg-accent text-primary" : "text-secondary hover:bg-white",
@@ -415,6 +563,8 @@ export default function PodCreativeBuilder() {
               >
                 <Icon size={16} />
                 <span className="min-w-0 flex-1 text-left">{label}</span>
+                {label === "Product Brief" && hasUnsavedChanges ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-primary">Draft</span> : null}
+                {label === "Concepts" && hasGeneratedPack ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-primary">Ready</span> : null}
                 {comingSoon ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-secondary">Soon</span> : null}
               </button>
             ))}
@@ -423,6 +573,29 @@ export default function PodCreativeBuilder() {
 
         <section className="min-w-0 flex-1 px-4 py-8 md:px-8 lg:py-12">
           <div className="mx-auto max-w-[1320px] space-y-8">
+            <nav className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
+              {navItems.map(([label, Icon, comingSoon]) => (
+                <button
+                  type="button"
+                  key={label}
+                  onClick={() => {
+                    if (label === "Product Brief") document.getElementById("product-brief")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    if (["Concepts", "Prompts", "Shopify Copy", "Meta Ads", "Export"].includes(label)) {
+                      setActiveTab(label);
+                      outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }
+                  }}
+                  className={cx(
+                    "focus-ring inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium",
+                    label === "Product Brief" ? "border-black/10 bg-accent text-primary" : "border-border bg-white text-secondary",
+                  )}
+                >
+                  <Icon size={15} />
+                  {label}
+                  {comingSoon ? <span className="text-[10px]">Soon</span> : null}
+                </button>
+              ))}
+            </nav>
             <section className="max-w-4xl">
               <p className="mb-4 text-xs font-medium uppercase tracking-[0.06em] text-secondary">POD Creative Workflow</p>
               <h1 className="page-title">Build custom POD products from competitor signals.</h1>
@@ -436,17 +609,26 @@ export default function PodCreativeBuilder() {
                 project={project}
                 screenshot={screenshot}
                 updateProject={updateProject}
-                updateScreenshot={setScreenshot}
+                updateScreenshot={updateScreenshotDraft}
                 onGenerate={generateStrategy}
                 onSaveDraft={saveDraft}
                 onClearDraft={clearDraft}
                 isGenerating={isGenerating}
+                clearNeedsConfirm={clearNeedsConfirm}
               />
 
-              <BriefSummary project={project} analysis={analysis} selectedCount={selectedConcepts.length} onGenerate={generateStrategy} isGenerating={isGenerating} />
+              <BriefSummary
+                project={project}
+                screenshot={screenshot}
+                analysis={analysis}
+                selectedCount={selectedConcepts.length}
+                onGenerate={generateStrategy}
+                isGenerating={isGenerating}
+                readiness={readiness}
+              />
             </section>
 
-            <section className="rounded-xl border border-border bg-white">
+            <section ref={outputRef} className="scroll-mt-24 rounded-xl border border-border bg-white">
               <div className="overflow-x-auto border-b border-border p-3">
                 <div className="flex min-w-max gap-2">
                   {visibleTabs.map((tab) => (
@@ -465,7 +647,9 @@ export default function PodCreativeBuilder() {
                 </div>
               </div>
               <div className="p-5 md:p-8">
-                {!analysis ? (
+                {isGenerating ? (
+                  <LoadingState />
+                ) : !analysis ? (
                   <EmptyState onGenerate={generateStrategy} isGenerating={isGenerating} />
                 ) : (
                   <>
@@ -478,7 +662,7 @@ export default function PodCreativeBuilder() {
                       <p className="mb-4 text-xs font-medium uppercase tracking-[0.06em] text-secondary">Generated via {strategySource}</p>
                     ) : null}
                     {displayedActiveTab === "Overview" && <OverviewTab analysis={analysis} onCopied={showCopied} />}
-                    {displayedActiveTab === "Custom Map" && <CustomMapTab analysis={analysis} />}
+                    {displayedActiveTab === "Custom Map" && <CustomMapTab analysis={analysis} onCopied={showCopied} />}
                     {displayedActiveTab === "Concepts" && (
                       <ConceptsTab concepts={concepts} onToggle={toggleConcept} onCopied={showCopied} onRegenerate={regenerateConcepts} />
                     )}
@@ -513,6 +697,7 @@ function BriefForm({
   onSaveDraft,
   onClearDraft,
   isGenerating,
+  clearNeedsConfirm,
 }: {
   project: Project;
   screenshot: ScreenshotState | null;
@@ -522,12 +707,15 @@ function BriefForm({
   onSaveDraft: () => void;
   onClearDraft: () => void;
   isGenerating: boolean;
+  clearNeedsConfirm: boolean;
 }) {
   const handleScreenshotChange = (file: File | undefined) => {
     if (!file) {
       updateScreenshot(null);
       return;
     }
+
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) return;
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -542,8 +730,8 @@ function BriefForm({
   };
 
   return (
-    <form className="grid gap-7 rounded-xl border border-border bg-white p-6 md:p-8">
-      <FormSection title="Competitor Input">
+    <form id="product-brief" className="grid scroll-mt-24 gap-5">
+      <FormSection title="Competitor Input" helper="Start with a URL, pasted notes, or a screenshot. One strong competitor signal is enough for a useful first pack.">
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <FieldLabel>Competitor product URL</FieldLabel>
@@ -562,22 +750,32 @@ function BriefForm({
           <FieldLabel>Product description or notes</FieldLabel>
           <TextArea value={project.productDescription || ""} onChange={(value) => updateProject("productDescription", value)} placeholder="Paste product notes, visible options, or review snippets" />
         </div>
-        <div className="rounded-xl border border-dashed border-border bg-surface-muted p-4">
-          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px] md:items-center">
+        <div
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            handleScreenshotChange(event.dataTransfer.files?.[0]);
+          }}
+          className="rounded-xl border border-dashed border-shade-30 bg-surface-muted p-4"
+        >
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_200px] md:items-center">
             <div>
               <FieldLabel>Competitor screenshot</FieldLabel>
-              <p className="mt-1 text-xs leading-5 text-secondary">Upload a product screenshot if the competitor page is hard to fetch.</p>
+              <p className="mt-1 text-xs leading-5 text-secondary">
+                Use a product screenshot when the competitor URL is hard to read. PNG, JPG, JPEG, or WebP up to 5MB.
+              </p>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp"
                 onChange={(event) => handleScreenshotChange(event.target.files?.[0])}
                 className="mt-3 block w-full text-sm text-secondary file:mr-3 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
               />
               {screenshot ? (
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-secondary">
                   <span className="font-semibold text-primary">{screenshot.name}</span>
-                  <span>{Math.round(screenshot.size / 1024)} KB</span>
-                  <button type="button" onClick={() => updateScreenshot(null)} className="font-semibold text-danger">
+                  <span>{formatFileSize(screenshot.size)}</span>
+                  <button type="button" onClick={() => updateScreenshot(null)} className="focus-ring inline-flex h-8 items-center gap-1 rounded-full border border-border bg-white px-3 font-semibold text-primary">
+                    <X size={13} />
                     Remove
                   </button>
                 </div>
@@ -589,8 +787,9 @@ function BriefForm({
                 <img src={screenshot.base64} alt="Competitor screenshot preview" className="h-full max-h-44 w-full object-cover" />
               ) : (
                 <div className="px-4 py-8 text-center">
-                  <FileText className="mx-auto mb-2 text-primary" size={24} />
-                  <p className="text-xs font-medium text-secondary">No screenshot</p>
+                  <Upload className="mx-auto mb-2 text-primary" size={24} />
+                  <p className="text-xs font-medium text-primary">Drop screenshot</p>
+                  <p className="mt-1 text-xs text-secondary">or choose a file</p>
                 </div>
               )}
             </div>
@@ -598,20 +797,19 @@ function BriefForm({
         </div>
       </FormSection>
 
-      <FormSection title="Strategy Controls">
-        <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Product context</p>
+      <FormSection title="Product Context" helper="Define the shopper, product format, occasion, and niche so the pack has a clear commercial target.">
         <div className="grid gap-4 md:grid-cols-3">
           <div className="space-y-2">
             <FieldLabel>Product type</FieldLabel>
-            <SelectField value={project.productType || "Suncatcher"} options={PRODUCT_TYPES} onChange={(value) => updateProject("productType", value)} />
+            <SelectField value={project.productType || ""} options={["", ...PRODUCT_TYPES]} onChange={(value) => updateProject("productType", value)} />
           </div>
           <div className="space-y-2">
             <FieldLabel>Buyer persona</FieldLabel>
-            <SelectField value={project.buyerPersona || "Dog Mom"} options={BUYER_PERSONAS} onChange={(value) => updateProject("buyerPersona", value)} />
+            <SelectField value={project.buyerPersona || ""} options={["", ...BUYER_PERSONAS]} onChange={(value) => updateProject("buyerPersona", value)} />
           </div>
           <div className="space-y-2">
             <FieldLabel>Occasion</FieldLabel>
-            <SelectField value={project.occasion || "Pet Memorial"} options={OCCASIONS} onChange={(value) => updateProject("occasion", value)} />
+            <SelectField value={project.occasion || ""} options={["", ...OCCASIONS]} onChange={(value) => updateProject("occasion", value)} />
           </div>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
@@ -624,9 +822,9 @@ function BriefForm({
             <TextInput value={project.priceRange || ""} onChange={(value) => updateProject("priceRange", value)} placeholder="$19-$39" />
           </div>
         </div>
-        <div className="border-t border-border pt-5">
-          <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Brand direction</p>
-        </div>
+      </FormSection>
+
+      <FormSection title="Brand Direction" helper="Choose the tone and visual language the generated angles should follow.">
         <div className="space-y-2">
           <FieldLabel>Brand voice</FieldLabel>
           <MultiPillPicker options={BRAND_VOICES} selected={project.brandVoice || []} onChange={(value) => updateProject("brandVoice", value)} />
@@ -647,13 +845,33 @@ function BriefForm({
         </div>
       </FormSection>
 
-      <FormSection title="Output Goals">
-        <MultiPillPicker options={OUTPUT_REQUESTS} selected={project.outputs || []} onChange={(value) => updateProject("outputs", value)} />
+      <FormSection title="Output Goals" helper="Select the deliverables you want in the creative pack. Three or more gives the best workflow coverage.">
+        <div className="grid gap-2 md:grid-cols-2">
+          {OUTPUT_REQUESTS.map((option) => {
+            const active = project.outputs?.includes(option) || false;
+            return (
+              <button
+                type="button"
+                key={option}
+                onClick={() => updateProject("outputs", active ? (project.outputs || []).filter((item) => item !== option) : [...(project.outputs || []), option])}
+                className={cx(
+                  "focus-ring flex min-h-11 items-center gap-3 rounded-full border px-4 text-left text-sm font-medium transition",
+                  active ? "border-black/10 bg-accent text-primary" : "border-border bg-white text-secondary hover:bg-surface-muted",
+                )}
+              >
+                <span className={cx("grid h-5 w-5 shrink-0 place-items-center rounded-full border", active ? "border-primary bg-primary text-white" : "border-shade-30 bg-white")}>
+                  {active ? <Check size={13} /> : null}
+                </span>
+                <span>{option}</span>
+              </button>
+            );
+          })}
+        </div>
       </FormSection>
 
       <div className="flex flex-wrap justify-end gap-3">
         <button type="button" onClick={onClearDraft} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
-          Clear Draft
+          {clearNeedsConfirm ? "Confirm clear?" : "Clear Draft"}
         </button>
         <button type="button" onClick={onSaveDraft} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
           <Check size={17} />
@@ -661,17 +879,21 @@ function BriefForm({
         </button>
         <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <Sparkles size={17} className={isGenerating ? "animate-pulse" : ""} />
-          {isGenerating ? "Building product strategy..." : "Generate Strategy"}
+          {isGenerating ? "Generating..." : "Generate Strategy"}
         </button>
       </div>
     </form>
   );
 }
 
-function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
+function FormSection({ title, helper, children }: { title: string; helper: string; children: React.ReactNode }) {
   return (
-    <fieldset className="space-y-4">
-      <legend className="mb-4 text-xl font-medium">{title}</legend>
+    <fieldset className="space-y-4 rounded-xl border border-border bg-white p-5 md:p-6">
+      <legend className="sr-only">{title}</legend>
+      <div>
+        <h2 className="text-xl font-medium text-primary">{title}</h2>
+        <p className="mt-1 text-sm leading-6 text-secondary">{helper}</p>
+      </div>
       {children}
     </fieldset>
   );
@@ -679,16 +901,20 @@ function FormSection({ title, children }: { title: string; children: React.React
 
 function BriefSummary({
   project,
+  screenshot,
   analysis,
   selectedCount,
   onGenerate,
   isGenerating,
+  readiness,
 }: {
   project: Project;
+  screenshot: ScreenshotState | null;
   analysis: Analysis | null;
   selectedCount: number;
   onGenerate: () => void;
   isGenerating: boolean;
+  readiness: ReadinessResult;
 }) {
   const summary = [
     ["Product type", project.productType],
@@ -698,13 +924,35 @@ function BriefSummary({
     ["Brand voice", project.brandVoice?.join(", ")],
     ["Visual style", project.visualStyle?.join(", ")],
     ["Outputs", `${project.outputs?.length || 0} selected`],
+    ["Competitor input", project.competitorUrl || project.productDescription ? "Provided" : "Missing"],
+    ["Screenshot", screenshot ? screenshot.name : "Not uploaded"],
+    ["Notes", project.userNotes || project.avoidList ? "Provided" : "Not added"],
   ];
+  const ready = readiness.score >= 80;
 
   return (
     <aside className="h-fit space-y-4 xl:sticky xl:top-28">
-      <div className="rounded-xl border border-black/10 bg-accent p-6 md:p-8">
-        <h3 className="text-2xl font-medium">Creative readiness</h3>
-        <p className="mt-2 text-sm leading-6 text-shade-70">Confirm the buyer, occasion, and output goals before generating the creative pack.</p>
+      <div className={cx("rounded-xl border p-6 md:p-8", ready ? "border-black/10 bg-accent" : "border-border bg-white")}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-2xl font-medium">Creative readiness</h3>
+            <p className="mt-2 text-sm leading-6 text-shade-70">A quick preflight for the brief. Generation stays available while this shows what would improve the pack.</p>
+          </div>
+          <span className={cx("rounded-full border px-3 py-1 text-xs font-medium", ready ? "border-black/10 bg-white/70 text-primary" : "border-border bg-surface-muted text-secondary")}>
+            {readiness.label}
+          </span>
+        </div>
+        <div className="mt-5">
+          <div className="flex items-end justify-between gap-4">
+            <p className="text-4xl font-semibold">{readiness.score}%</p>
+            <p className="text-sm text-secondary">
+              {readiness.completed}/{readiness.total} complete
+            </p>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
+            <div className={cx("h-full rounded-full", ready ? "bg-primary" : "bg-shade-70")} style={{ width: `${readiness.score}%` }} />
+          </div>
+        </div>
         <div className="mt-4 space-y-3">
           {summary.map(([label, value]) => (
             <div key={label} className="rounded-lg border border-black/10 bg-white/70 px-3 py-2">
@@ -713,9 +961,19 @@ function BriefSummary({
             </div>
           ))}
         </div>
+        {readiness.missing.length ? (
+          <div className="mt-4 rounded-lg border border-border bg-white/70 p-4">
+            <p className="text-sm font-medium text-primary">Helpful next inputs</p>
+            <ul className="mt-2 space-y-1 text-sm leading-6 text-secondary">
+              {readiness.missing.slice(0, 4).map((item) => (
+                <li key={item}>- {item}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <RefreshCw size={16} className={isGenerating ? "animate-spin" : ""} />
-          {isGenerating ? "Building..." : "Generate Strategy"}
+          {isGenerating ? "Generating..." : "Generate Strategy"}
         </button>
       </div>
       <div className="rounded-xl border border-border bg-white p-6">
@@ -735,14 +993,58 @@ function BriefSummary({
 
 function EmptyState({ onGenerate, isGenerating }: { onGenerate: () => void; isGenerating: boolean }) {
   return (
-    <div className="grid place-items-center rounded-xl border border-dashed border-border bg-surface-muted px-4 py-16 text-center">
-      <Sparkles className="mb-3 text-primary" size={30} />
-      <h3 className="text-xl font-medium">Your creative pack will appear here.</h3>
-      <p className="mt-2 max-w-md text-sm leading-6 text-secondary">Add a competitor product, define your buyer and occasion, then generate a strategy.</p>
+    <div className="rounded-xl border border-dashed border-border bg-surface-muted px-5 py-12 text-center md:px-8">
+      <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Creative Pack</p>
+      <Sparkles className="mx-auto mt-4 text-primary" size={30} />
+      <h3 className="mt-4 text-2xl font-medium">Your product strategy will appear here.</h3>
+      <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-secondary">
+        Add a competitor signal, choose a buyer and occasion, then generate a pack with angles, prompts, Shopify copy, and Meta ad ideas.
+      </p>
+      <div className="mx-auto mt-6 grid max-w-3xl gap-3 md:grid-cols-3">
+        {["Custom fields map", "Design + mockup prompts", "Shopify + Meta copy"].map((item) => (
+          <div key={item} className="rounded-xl border border-border bg-white px-4 py-4 text-sm font-medium text-primary">
+            {item}
+          </div>
+        ))}
+      </div>
       <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
         <Sparkles size={16} className={isGenerating ? "animate-pulse" : ""} />
-        {isGenerating ? "Building product strategy..." : "Generate Strategy"}
+        {isGenerating ? "Generating..." : "Generate Strategy"}
       </button>
+    </div>
+  );
+}
+
+function LoadingState() {
+  const steps = [
+    "Reading competitor signal",
+    "Mapping personalization fields",
+    "Building original angles",
+    "Writing prompts and copy",
+    "Preparing export pack",
+  ];
+
+  return (
+    <div className="rounded-xl border border-border bg-surface-muted p-6 md:p-8">
+      <div className="flex items-center gap-3">
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-primary text-white">
+          <Sparkles size={18} className="animate-pulse" />
+        </div>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Generating</p>
+          <h3 className="text-2xl font-medium">Building your creative pack.</h3>
+        </div>
+      </div>
+      <div className="mt-6 grid gap-3">
+        {steps.map((step, index) => (
+          <div key={step} className="flex items-center gap-3 rounded-full border border-border bg-white px-4 py-3 text-sm font-medium text-primary">
+            <span className={cx("grid h-6 w-6 place-items-center rounded-full text-xs", index === 0 ? "bg-primary text-white" : "bg-accent text-primary")}>
+              {index + 1}
+            </span>
+            {step}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -751,6 +1053,12 @@ function OverviewTab({ analysis, onCopied }: { analysis: Analysis; onCopied: () 
   const breakdown = analysis.productBreakdown;
   return (
     <div className="space-y-5">
+      <TabIntro
+        eyebrow="Overview"
+        title="Product strategy overview"
+        description="Use this as the strategic brief before designing, listing, or advertising the product."
+        action={<CopyButton value={JSON.stringify(analysis, null, 2)} onCopied={onCopied} label="Copy tab" />}
+      />
       <div className="grid gap-3 md:grid-cols-4">
         <InfoCard title="Product Type" value={breakdown.productType} />
         <InfoCard title="Buyer Persona" value={breakdown.coreBuyer} />
@@ -795,9 +1103,15 @@ function ListCard({ title, items, danger = false }: { title: string; items: stri
   );
 }
 
-function CustomMapTab({ analysis }: { analysis: Analysis }) {
+function CustomMapTab({ analysis, onCopied }: { analysis: Analysis; onCopied: () => void }) {
   return (
     <div className="space-y-5">
+      <TabIntro
+        eyebrow="Custom Map"
+        title="Personalization map"
+        description="Turn these rows into product options, image upload fields, and shopper-facing Shopify labels."
+        action={<CopyButton value={JSON.stringify(analysis.customFields, null, 2)} onCopied={onCopied} label="Copy tab" />}
+      />
       <div className="overflow-x-auto rounded-xl border border-border">
         <table className="w-full min-w-[720px] border-collapse bg-white text-left text-sm">
           <thead className="bg-surface-muted text-xs uppercase tracking-[0.06em] text-secondary">
@@ -843,7 +1157,21 @@ function ConceptsTab({
 }) {
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <TabIntro
+        eyebrow="Concepts"
+        title="Original product angles"
+        description="Select the angles you want to carry into prompts, Shopify copy, ads, and exports."
+        action={
+          <>
+            <CopyButton value={JSON.stringify(concepts, null, 2)} onCopied={onCopied} label="Copy tab" />
+            <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-full border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+              <RefreshCw size={16} />
+              Regenerate
+            </button>
+          </>
+        }
+      />
+      <div className="hidden justify-end">
         <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-full border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
           <RefreshCw size={16} />
           Regenerate concepts
@@ -872,7 +1200,7 @@ function ConceptsTab({
               <Detail label="Ad hook" value={concept.adHook} />
             </dl>
             <div className="mt-4 flex gap-2">
-              <CopyButton value={JSON.stringify(concept, null, 2)} onCopied={onCopied} />
+              <CopyButton value={JSON.stringify(concept, null, 2)} onCopied={onCopied} label="Copy selected concept" />
               <button type="button" className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-full border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
                 <RefreshCw size={14} />
                 Regenerate
@@ -922,6 +1250,12 @@ function PromptsTab({
 
   return (
     <div className="space-y-6">
+      <TabIntro
+        eyebrow="Prompts"
+        title="Design and lifestyle prompts"
+        description="Use these prompts to brief image generation, design production, mockup creation, and ad creative variants."
+        action={<CopyButton value={JSON.stringify(selectedConcepts.map((concept) => promptPacks[concept.id]).filter(Boolean), null, 2)} onCopied={onCopied} label="Copy tab" />}
+      />
       {selectedConcepts.map((concept) => {
         const pack = promptPacks[concept.id];
         if (!pack) return null;
@@ -956,6 +1290,12 @@ function ShopifyTab({
   if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to generate Shopify copy.</p>;
   return (
     <div className="space-y-6">
+      <TabIntro
+        eyebrow="Shopify Copy"
+        title="Shopify-ready listing copy"
+        description="Use this as a first-pass listing kit, then edit claims, production details, and shipping notes before publishing."
+        action={<CopyButton value={JSON.stringify(selectedConcepts.map((concept) => copyPacks[concept.id]).filter(Boolean), null, 2)} onCopied={onCopied} label="Copy tab" />}
+      />
       {selectedConcepts.map((concept) => {
         const pack = copyPacks[concept.id];
         if (!pack) return null;
@@ -995,6 +1335,12 @@ function MetaTab({
   if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to generate Meta Ads copy.</p>;
   return (
     <div className="space-y-6">
+      <TabIntro
+        eyebrow="Meta Ads"
+        title="Ad hooks and creative angles"
+        description="Use these hooks and primary texts as test starters for emotional angles, offer framing, and UGC scripts."
+        action={<CopyButton value={JSON.stringify(selectedConcepts.map((concept) => copyPacks[concept.id]).filter(Boolean), null, 2)} onCopied={onCopied} label="Copy tab" />}
+      />
       {selectedConcepts.map((concept) => {
         const pack = copyPacks[concept.id];
         if (!pack) return null;
@@ -1030,24 +1376,25 @@ function ExportTab({
 }) {
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-2xl font-medium">Export your full creative pack.</h3>
-        <p className="mt-2 text-sm text-secondary">Download everything as Markdown or JSON so you can use it with Codex, Shopify, or your design workflow.</p>
-      </div>
+      <TabIntro
+        eyebrow="Export"
+        title="Download or copy the full pack"
+        description="Download everything as Markdown or JSON so you can use it with Codex, Shopify, or your design workflow."
+      />
       <div className="flex flex-wrap gap-3">
         {flags.exportMarkdown ? (
           <button type="button" onClick={() => onDownload("pod-creative-pack.md", markdown, "text/markdown")} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
             <Download size={17} />
-            Download Markdown
+            Export Markdown
           </button>
         ) : null}
         {flags.exportJson ? (
           <button type="button" onClick={() => onDownload("pod-creative-pack.json", jsonValue, "application/json")} className="focus-ring inline-flex h-11 items-center gap-2 rounded-full border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
             <FileJson size={17} />
-            Download JSON
+            Export JSON
           </button>
         ) : null}
-        <CopyButton value={markdown} onCopied={onCopied} />
+        <CopyButton value={markdown} onCopied={onCopied} label="Copy tab" />
       </div>
       <PromptBlock title="Markdown preview" value={markdown} onCopied={onCopied} />
     </div>
