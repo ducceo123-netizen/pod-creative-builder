@@ -1,6 +1,6 @@
 import { StrategyResponseSchema } from "@/lib/ai/schema";
 import { cleanGenericOtherLanguage, normalizeProject } from "@/lib/normalizeProject";
-import { buildLocalStrategy, type GenerateStrategyRequest, type GenerateStrategyResponse } from "@/lib/strategy";
+import type { GenerateStrategyRequest, GenerateStrategyResponse } from "@/lib/strategy";
 
 const SYSTEM_PROMPT = `You are a senior POD product strategist, Shopify conversion copywriter, and Meta Ads creative strategist.
 
@@ -40,7 +40,6 @@ export async function generateStrategyWithGroq(request: GenerateStrategyRequest)
     throw new Error("Missing GROQ_API_KEY. Add it to .env.local to enable Groq generation.");
   }
 
-  const fallback = buildLocalStrategy(request.project);
   const normalized = normalizeProject(request.project);
 
   const prompt = `Create a complete POD creative strategy using this exact JSON shape as the contract. Keep all ids as strings and use the existing project id where relevant.
@@ -62,7 +61,97 @@ Screenshot provided:
 ${request.screenshotBase64 ? "Yes, base64 image data is available in the request. Use it only as context if supported." : "No screenshot provided."}
 
 Required response shape:
-${JSON.stringify(fallback, null, 2)}
+{
+  "analysis": {
+    "id": "analysis-${request.project.id}",
+    "projectId": "${request.project.id}",
+    "productBreakdown": {
+      "productType": "string",
+      "coreBuyer": "string",
+      "coreOccasion": "string",
+      "coreEmotion": "string",
+      "visualMechanism": "string",
+      "personalizationLogic": "string",
+      "likelyPurchaseReason": "string"
+    },
+    "customFields": [
+      {
+        "name": "string",
+        "example": "string",
+        "emotionalValue": "low | medium | high",
+        "difficulty": "easy | medium | hard",
+        "recommended": true,
+        "shopifyOptionLabel": "string"
+      }
+    ],
+    "inspirationRules": {
+      "keepAsInspiration": ["string"],
+      "doNotCopy": ["string"],
+      "safeTransformationDirections": ["string"]
+    },
+    "improvementOpportunities": ["string"],
+    "scores": {
+      "customDepth": "low | medium | high",
+      "adsPotential": "low | medium | high",
+      "productionDifficulty": "easy | medium | hard",
+      "copyRisk": "low | medium | high"
+    }
+  },
+  "concepts": [
+    {
+      "id": "concept-1",
+      "projectId": "${request.project.id}",
+      "name": "string",
+      "oneLineIdea": "string",
+      "buyer": "string",
+      "occasion": "string",
+      "emotion": "string",
+      "customFields": ["string"],
+      "designDirection": "string",
+      "mockupDirection": "string",
+      "adHook": "string",
+      "selected": true,
+      "scores": {
+        "customDepth": "low | medium | high",
+        "adsPotential": "low | medium | high",
+        "productionDifficulty": "easy | medium | hard",
+        "copyRisk": "low | medium | high"
+      }
+    }
+  ],
+  "promptPacks": {
+    "concept-1": {
+      "id": "prompts-concept-1",
+      "conceptId": "concept-1",
+      "designPrompt": "string",
+      "lifestyleMockupPrompt": "string",
+      "banner21x9Prompt": "string",
+      "showcase16x9Prompt": "string",
+      "product468x598Prompt": "string",
+      "square1x1Prompt": "string",
+      "reel9x16Prompt": "string"
+    }
+  },
+  "copyPacks": {
+    "concept-1": {
+      "id": "copy-concept-1",
+      "conceptId": "concept-1",
+      "shopifyTitles": ["string"],
+      "shortDescription": "string",
+      "fullDescription": "string",
+      "bulletBenefits": ["string"],
+      "personalizationInstructions": "string",
+      "trustNotes": ["string"],
+      "faqs": [{"question": "string", "answer": "string"}],
+      "tags": ["string"],
+      "metaHooks": ["string"],
+      "primaryTexts": ["string"],
+      "headlines": ["string"],
+      "ugcScriptIdea": "string",
+      "testingPlan": ["string"]
+    }
+  }
+}
 
 Rules:
 - Return 10 to 12 original concepts.
