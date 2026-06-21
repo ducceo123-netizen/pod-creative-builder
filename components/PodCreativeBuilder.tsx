@@ -24,7 +24,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
 import { exportMarkdown } from "@/lib/exportMarkdown";
 import { createProject, generateComponentPromptPack, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
-import { cleanGenericOtherLanguage, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
+import { buildSearchText, cleanGenericOtherLanguage, getCustomFields, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
 import type { Analysis } from "@/types/analysis";
@@ -88,6 +88,24 @@ type GenerationVersion = {
   copyPacks: Record<string, CopyPack>;
   generationMeta: GenerationMeta;
   createdAt: string;
+};
+
+type InferredProjectContext = {
+  normalizedProductType: string;
+  buyerPersona: string;
+  giftRecipient: string[];
+  occasion: string[];
+  niche: string;
+  visualStyle: string;
+  brandVoice: string[];
+  customFields: string[];
+  coreEmotion: string;
+  visualMechanism: string;
+  likelyPurchaseReason: string;
+  copyRisk: "Low" | "Medium" | "High";
+  recommendedOutputs: string[];
+  confidence: number;
+  inferredFrom: string[];
 };
 
 type ConceptExtras = Record<string, { favorite?: boolean; notes?: string }>;
@@ -164,6 +182,7 @@ type CreativeDraft = {
   generationMeta?: GenerationMeta;
   versions?: GenerationVersion[];
   opportunityScore?: OpportunityScore;
+  inferredContext?: InferredProjectContext | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -311,6 +330,7 @@ function buildDraft(args: {
   assetPlans: CreativeAssetPlan[];
   generationMeta?: GenerationMeta;
   versions: GenerationVersion[];
+  inferredContext?: InferredProjectContext | null;
   createdAt?: string;
 }): CreativeDraft {
   const now = new Date().toISOString();
@@ -337,6 +357,7 @@ function buildDraft(args: {
     generationMeta: args.generationMeta,
     versions: args.versions,
     opportunityScore: getOpportunityScore(args.project, args.analysis),
+    inferredContext: args.inferredContext || null,
     createdAt: args.createdAt || now,
     updatedAt: now,
   };
@@ -376,6 +397,53 @@ function buildComponentPromptPacks(selectedConcepts: Concept[], productType: str
 function levelScore(value: "low" | "medium" | "high" | "easy" | "hard" | undefined, inverted = false) {
   const score = value === "high" || value === "hard" ? 8 : value === "medium" ? 6 : value === "low" || value === "easy" ? 3 : 5;
   return inverted ? 11 - score : score;
+}
+
+function inferProjectContext(project: Project, screenshot: ScreenshotState | null): InferredProjectContext {
+  const normalized = normalizeProject(project);
+  const text = buildSearchText(project);
+  const inferredFrom = [
+    project.productTitle ? "Product title" : "",
+    project.productDescription ? "Product notes" : "",
+    project.competitorUrl ? "Competitor URL" : "",
+    screenshot ? "Screenshot uploaded" : "",
+  ].filter(Boolean);
+  const productType = normalized.normalizedProductType;
+  const isDadGift = /dad|father|husband|grandpa|papa|belly|bbq|grill/.test(text);
+  const isPet = /pet|dog|cat|memorial|rainbow|paw/.test(text);
+  const isHoliday = /christmas|ornament|stocking|holiday/.test(text);
+  const buyerPersona = project.buyerPersona || (isDadGift ? "Dad" : isPet ? "Pet Lover" : "Family");
+  const occasion = project.occasion || (isDadGift ? "Father's Day" : isPet ? "Pet Memorial" : isHoliday ? "Christmas" : "Birthday");
+  const visualStyle = normalized.normalizedVisualDirection.includes("Funny custom character")
+    ? "Funny Custom Character"
+    : productType === "Stained Glass Suncatcher"
+      ? "Stained Glass"
+      : productType === "Custom Photo Cap"
+        ? "Embroidery Style"
+        : "Clean Ecommerce Product Mockup";
+  const brandVoice = project.brandVoice?.length ? project.brandVoice : isDadGift ? ["Fun", "Gift-focused", "US-market natural"] : ["Warm", "Gift-focused", "US-market natural"];
+  const customFields = getCustomFields(productType).map((field) => field.name);
+  const confidence = Math.min(96, 48 + (project.productTitle ? 16 : 0) + (project.productDescription ? 16 : 0) + (project.competitorUrl ? 8 : 0) + (screenshot ? 8 : 0));
+
+  return {
+    normalizedProductType: productType,
+    buyerPersona,
+    giftRecipient: isDadGift ? ["Dad", "Husband", "Grandpa"] : isPet ? ["Dog Mom", "Cat Mom", "Pet Lover"] : [buyerPersona],
+    occasion: [occasion],
+    niche: project.niche || (isDadGift ? "Funny personalized dad gifts and family humor gifts" : isPet ? "Personalized pet memorial gifts" : `Personalized ${productType.toLowerCase()} gifts`),
+    visualStyle,
+    brandVoice,
+    customFields,
+    coreEmotion: isDadGift ? "Playful family humor" : isPet ? "Warm remembrance" : "Personal, thoughtful recognition",
+    visualMechanism: normalized.normalizedVisualDirection,
+    likelyPurchaseReason: isDadGift
+      ? "The buyer wants a custom funny gift that feels more personal than a generic Father's Day product."
+      : "The buyer wants a personalized gift that feels specific to the recipient and occasion.",
+    copyRisk: project.productDescription ? "Medium" : "Low",
+    recommendedOutputs: OUTPUT_REQUESTS,
+    confidence,
+    inferredFrom: inferredFrom.length ? inferredFrom : ["Fallback rules"],
+  };
 }
 
 function getOpportunityScore(project: Project, analysis: Analysis | null): OpportunityScore {
@@ -778,6 +846,7 @@ export default function PodCreativeBuilder() {
   });
   const [generationMeta, setGenerationMeta] = useState<GenerationMeta | undefined>(() => getCurrentDraft()?.generationMeta);
   const [versions, setVersions] = useState<GenerationVersion[]>(() => getCurrentDraft()?.versions || []);
+  const [inferredContext, setInferredContext] = useState<InferredProjectContext | null>(() => getCurrentDraft()?.inferredContext || null);
   const [activeVersionId, setActiveVersionId] = useState("");
   const [conceptExtras, setConceptExtras] = useState<ConceptExtras>(() => getCurrentDraft()?.conceptExtras || {});
   const [assetPlans, setAssetPlans] = useState<CreativeAssetPlan[]>(() => getCurrentDraft()?.assetPlans || []);
@@ -886,6 +955,58 @@ export default function PodCreativeBuilder() {
     window.setTimeout(() => setToast(""), 1400);
   };
 
+  const analyzeProduct = () => {
+    const hasSignal = Boolean(project.competitorUrl || project.productTitle || project.productDescription || screenshot);
+    if (!hasSignal) {
+      setToast("Add a URL, screenshot, title, or notes first");
+      window.setTimeout(() => setToast(""), 1600);
+      return;
+    }
+
+    const inferred = inferProjectContext(project, screenshot);
+    const nextProject: Project = {
+      ...project,
+      productType: inferred.normalizedProductType,
+      buyerPersona: inferred.buyerPersona,
+      occasion: inferred.occasion[0] || project.occasion,
+      niche: inferred.niche,
+      brandVoice: inferred.brandVoice,
+      visualStyle: [inferred.visualStyle],
+      outputs: inferred.recommendedOutputs,
+      updatedAt: new Date().toISOString(),
+    };
+    const existing = currentDraftId ? drafts.find((draft) => draft.id === currentDraftId) : null;
+    const draft = buildDraft({
+      id: currentDraftId || undefined,
+      project: nextProject,
+      analysis,
+      concepts,
+      promptPacks,
+      componentPromptPacks,
+      copyPacks,
+      screenshot,
+      conceptExtras,
+      assetPlans,
+      generationMeta,
+      versions,
+      inferredContext: inferred,
+      createdAt: existing?.createdAt,
+    });
+    const nextDrafts = existing ? drafts.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...drafts];
+
+    setProject(nextProject);
+    setInferredContext(inferred);
+    setDrafts(nextDrafts);
+    setCurrentDraftId(draft.id);
+    writeDrafts(nextDrafts);
+    localStorage.setItem(CURRENT_DRAFT_ID_KEY, draft.id);
+    localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
+    void saveRemoteDraft(draft);
+    setHasUnsavedChanges(false);
+    setToast("Product analyzed");
+    window.setTimeout(() => setToast(""), 1400);
+  };
+
   const applyStrategy = (strategy: GenerateStrategyResponse, meta: GenerationMeta) => {
     const normalized = normalizeProject(project);
     const nextProject: Project = {
@@ -924,6 +1045,7 @@ export default function PodCreativeBuilder() {
       assetPlans: nextAssetPlans,
       generationMeta: meta,
       versions: nextVersions,
+      inferredContext,
       createdAt: existing?.createdAt,
     });
     const nextDrafts = existing ? drafts.map((draft) => (draft.id === draftId ? nextDraft : draft)) : [nextDraft, ...drafts];
@@ -1036,6 +1158,7 @@ export default function PodCreativeBuilder() {
       assetPlans,
       generationMeta,
       versions,
+      inferredContext,
       createdAt: existing?.createdAt,
     });
     const nextDrafts = existing ? drafts.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...drafts];
@@ -1070,6 +1193,7 @@ export default function PodCreativeBuilder() {
     setAssetPlans(draft.assetPlans || []);
     setGenerationMeta(draft.generationMeta);
     setVersions(draft.versions || []);
+    setInferredContext(draft.inferredContext || null);
     setStrategySource(getSourceLabel(draft.generationMeta));
     setActiveView("Product Brief");
     setActiveTab("Analysis");
@@ -1094,6 +1218,7 @@ export default function PodCreativeBuilder() {
     setAssetPlans([]);
     setGenerationMeta(undefined);
     setVersions([]);
+    setInferredContext(null);
     setStrategySource("");
     setActiveView("Product Brief");
     setHasUnsavedChanges(true);
@@ -1170,6 +1295,7 @@ export default function PodCreativeBuilder() {
     setAssetPlans([]);
     setGenerationMeta(undefined);
     setVersions([]);
+    setInferredContext(null);
     setHasUnsavedChanges(false);
     setClearNeedsConfirm(false);
     setToast("Draft cleared");
@@ -1427,11 +1553,13 @@ export default function PodCreativeBuilder() {
                       screenshot={screenshot}
                       updateProject={updateProject}
                       updateScreenshot={updateScreenshotDraft}
+                      onAnalyze={analyzeProduct}
                       onGenerate={generateStrategy}
                       onSaveDraft={saveDraft}
                       onClearDraft={clearDraft}
                       isGenerating={isGenerating}
                       clearNeedsConfirm={clearNeedsConfirm}
+                      inferredContext={inferredContext}
                     />
                   </div>
 
@@ -1444,6 +1572,7 @@ export default function PodCreativeBuilder() {
                     isGenerating={isGenerating}
                     readiness={readiness}
                     opportunityScore={opportunityScore}
+                    inferredContext={inferredContext}
                     generationMeta={generationMeta}
                     versions={versions}
                     onSaveDraft={saveDraft}
@@ -1786,21 +1915,25 @@ function BriefForm({
   screenshot,
   updateProject,
   updateScreenshot,
+  onAnalyze,
   onGenerate,
   onSaveDraft,
   onClearDraft,
   isGenerating,
   clearNeedsConfirm,
+  inferredContext,
 }: {
   project: Project;
   screenshot: ScreenshotState | null;
   updateProject: <K extends keyof Project>(key: K, value: Project[K]) => void;
   updateScreenshot: (screenshot: ScreenshotState | null) => void;
+  onAnalyze: () => void;
   onGenerate: () => void;
   onSaveDraft: () => void;
   onClearDraft: () => void;
   isGenerating: boolean;
   clearNeedsConfirm: boolean;
+  inferredContext: InferredProjectContext | null;
 }) {
   const handleScreenshotChange = (file: File | undefined) => {
     if (!file) {
@@ -1824,19 +1957,13 @@ function BriefForm({
 
   return (
     <form id="product-brief" className="grid scroll-mt-24 gap-5">
-      <FormSection title="Competitor Input" helper="Start with a URL, pasted notes, or a screenshot. One strong competitor signal is enough for a useful first pack.">
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <FieldLabel>Competitor product URL</FieldLabel>
-            <TextInput value={project.competitorUrl || ""} onChange={(value) => updateProject("competitorUrl", value)} placeholder="https://..." />
-          </div>
-          <div className="space-y-2">
-            <FieldLabel>Competitor brand/store</FieldLabel>
-            <TextInput value={project.competitorBrand || ""} onChange={(value) => updateProject("competitorBrand", value)} placeholder="PawfectHouse, Etsy shop, Amazon seller" />
-          </div>
+      <FormSection title="1. Competitor Signal" helper="Paste one strong signal. URL, screenshot, title, or notes is enough to analyze the product.">
+        <div className="space-y-2">
+          <FieldLabel>Competitor product URL</FieldLabel>
+          <TextInput value={project.competitorUrl || ""} onChange={(value) => updateProject("competitorUrl", value)} placeholder="https://..." />
         </div>
         <div className="space-y-2">
-          <FieldLabel>Product title</FieldLabel>
+          <FieldLabel>Product title optional</FieldLabel>
           <TextInput value={project.productTitle || ""} onChange={(value) => updateProject("productTitle", value)} placeholder="Custom pet memorial suncatcher" />
         </div>
         <div className="space-y-2">
@@ -1888,9 +2015,39 @@ function BriefForm({
             </div>
           </div>
         </div>
+        <div className="flex flex-wrap justify-end gap-3">
+          <button type="button" onClick={onAnalyze} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
+            <Search size={17} />
+            Analyze Product
+          </button>
+        </div>
       </FormSection>
 
-      <FormSection title="Product Context" helper="Define the shopper, product format, occasion, and niche so the pack has a clear commercial target.">
+      {inferredContext ? (
+      <FormSection title="2. Review Auto-Inferred Context" helper={`Confidence ${inferredContext.confidence}%. Edit only what looks off before generating.`}>
+        <div className="grid gap-3 md:grid-cols-3">
+          {[
+            ["Product type", inferredContext.normalizedProductType],
+            ["Buyer", inferredContext.buyerPersona],
+            ["Occasion", inferredContext.occasion.join(", ")],
+            ["Niche", inferredContext.niche],
+            ["Visual style", inferredContext.visualStyle],
+            ["Copy risk", inferredContext.copyRisk],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl border border-border bg-surface-muted p-4">
+              <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">{label}</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-primary">{value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-xl border border-border bg-white p-4">
+          <p className="text-sm font-medium text-primary">Inferred from</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {inferredContext.inferredFrom.map((item) => (
+              <span key={item} className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary">{item}</span>
+            ))}
+          </div>
+        </div>
         <div className="grid gap-4 md:grid-cols-3">
           <div className="space-y-2">
             <FieldLabel>Product type</FieldLabel>
@@ -1910,10 +2067,6 @@ function BriefForm({
             <FieldLabel>Niche</FieldLabel>
             <TextInput value={project.niche || ""} onChange={(value) => updateProject("niche", value)} placeholder="Personalized pet gifts" />
           </div>
-          <div className="space-y-2">
-            <FieldLabel>Price range</FieldLabel>
-            <TextInput value={project.priceRange || ""} onChange={(value) => updateProject("priceRange", value)} placeholder="$19-$39" />
-          </div>
         </div>
         {project.productType === "Other" ? (
           <div className="space-y-2">
@@ -1927,8 +2080,19 @@ function BriefForm({
           </div>
         ) : null}
       </FormSection>
+      ) : null}
 
-      <FormSection title="Brand Direction" helper="Choose the tone and visual language the generated angles should follow.">
+      <details className="rounded-xl border border-border bg-white p-5 md:p-6">
+        <summary className="cursor-pointer text-xl font-medium text-primary">Advanced creative controls</summary>
+        <div className="mt-4 grid gap-5">
+        <div className="space-y-2">
+          <FieldLabel>Competitor brand/store</FieldLabel>
+          <TextInput value={project.competitorBrand || ""} onChange={(value) => updateProject("competitorBrand", value)} placeholder="PawfectHouse, Etsy shop, Amazon seller" />
+        </div>
+        <div className="space-y-2">
+          <FieldLabel>Price range</FieldLabel>
+          <TextInput value={project.priceRange || ""} onChange={(value) => updateProject("priceRange", value)} placeholder="$19-$39" />
+        </div>
         <div className="space-y-2">
           <FieldLabel>Brand voice</FieldLabel>
           <MultiPillPicker options={BRAND_VOICES} selected={project.brandVoice || []} onChange={(value) => updateProject("brandVoice", value)} />
@@ -1960,9 +2124,8 @@ function BriefForm({
             <TextArea value={project.userNotes || ""} onChange={(value) => updateProject("userNotes", value)} rows={3} placeholder="Anything your brand should emphasize" />
           </div>
         </div>
-      </FormSection>
-
-      <FormSection title="Output Goals" helper="Select the deliverables you want in the creative pack. Three or more gives the best workflow coverage.">
+        <div className="space-y-2">
+          <FieldLabel>Output goals</FieldLabel>
         <div className="grid gap-2 md:grid-cols-2">
           {OUTPUT_REQUESTS.map((option) => {
             const active = project.outputs?.includes(option) || false;
@@ -1984,7 +2147,9 @@ function BriefForm({
             );
           })}
         </div>
-      </FormSection>
+        </div>
+        </div>
+      </details>
 
       <div className="flex flex-wrap justify-end gap-3">
         <button type="button" onClick={onClearDraft} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
@@ -1994,9 +2159,9 @@ function BriefForm({
           <Check size={17} />
           Save Draft
         </button>
-        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+        <button type="button" onClick={onGenerate} disabled={isGenerating || !inferredContext} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <Sparkles size={17} className={isGenerating ? "animate-pulse" : ""} />
-          {isGenerating ? "Generating..." : "Generate Strategy"}
+          {isGenerating ? "Generating..." : "Generate Creative Pack"}
         </button>
       </div>
     </form>
@@ -2025,6 +2190,7 @@ function BriefSummary({
   isGenerating,
   readiness,
   opportunityScore,
+  inferredContext,
   generationMeta,
   versions,
   onSaveDraft,
@@ -2038,6 +2204,7 @@ function BriefSummary({
   isGenerating: boolean;
   readiness: ReadinessResult;
   opportunityScore: OpportunityScore;
+  inferredContext: InferredProjectContext | null;
   generationMeta?: GenerationMeta;
   versions: GenerationVersion[];
   onSaveDraft: () => void;
@@ -2078,7 +2245,17 @@ function BriefSummary({
           </div>
         </div>
         <div className="mt-4 grid gap-2">
-          {summary.map(([label, value]) => (
+          {(inferredContext
+            ? [
+                ["Product type", inferredContext.normalizedProductType],
+                ["Buyer", inferredContext.buyerPersona],
+                ["Occasion", inferredContext.occasion.join(", ")],
+                ["Niche", inferredContext.niche],
+                ["Core emotion", inferredContext.coreEmotion],
+                ["Copy risk", inferredContext.copyRisk],
+              ]
+            : summary
+          ).map(([label, value]) => (
             <div key={label} className="rounded-lg border border-black/10 bg-white/70 px-3 py-2">
               <p className="text-xs font-medium text-secondary">{label}</p>
               <p className="mt-1 text-sm font-medium text-primary">{value || "Not set"}</p>
@@ -2095,9 +2272,15 @@ function BriefSummary({
             </ul>
           </div>
         ) : null}
-        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+        {inferredContext ? (
+          <div className="mt-4 rounded-lg border border-border bg-white/70 px-3 py-2">
+            <p className="text-xs font-medium text-secondary">Confidence</p>
+            <p className="mt-1 text-sm font-semibold text-primary">{inferredContext.confidence}%</p>
+          </div>
+        ) : null}
+        <button type="button" onClick={onGenerate} disabled={isGenerating || !inferredContext} className="focus-ring mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <RefreshCw size={16} className={isGenerating ? "animate-spin" : ""} />
-          {isGenerating ? "Generating..." : "Generate Strategy"}
+          {isGenerating ? "Generating..." : "Generate Creative Pack"}
         </button>
       </div>
       <div className="rounded-xl border border-border bg-white p-5">

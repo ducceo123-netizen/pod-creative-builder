@@ -29,12 +29,12 @@ export function inferProductType(project: Project): string {
 
   const text = buildSearchText(project);
 
-  if (text.includes("squishy") && text.includes("fridge magnet")) return "Squishy Acrylic Fridge Magnet";
-  if (text.includes("fridge magnet") || text.includes("magnet")) return "Acrylic Fridge Magnet";
-  if (text.includes("suncatcher") || text.includes("stained glass")) return "Stained Glass Suncatcher";
-  if (text.includes("cap") || text.includes("hat")) return "Custom Photo Cap";
-  if (text.includes("mug")) return "Personalized Mug";
-  if (text.includes("t-shirt") || text.includes("shirt")) return "Custom T-Shirt";
+  if ((text.includes("squishy") || text.includes("poke") || text.includes("belly")) && (text.includes("fridge magnet") || text.includes("acrylic magnet") || text.includes("magnet"))) return "Squishy Acrylic Fridge Magnet";
+  if (text.includes("fridge magnet") || text.includes("acrylic magnet") || text.includes("magnet")) return "Acrylic Fridge Magnet";
+  if (text.includes("suncatcher") || text.includes("stained glass") || text.includes("window hanging") || text.includes("sunlight") || text.includes("rainbow")) return "Stained Glass Suncatcher";
+  if (text.includes("cap") || text.includes("hat") || text.includes("dad cap")) return "Custom Photo Cap";
+  if (text.includes("mug") || text.includes("coffee") || text.includes("cup")) return "Personalized Mug";
+  if (text.includes("t-shirt") || text.includes("shirt") || text.includes("tee") || text.includes("apparel") || text.includes("hoodie") || text.includes("sweatshirt")) return "Custom T-Shirt";
   if (text.includes("ornament")) return "Personalized Ornament";
   if (text.includes("blanket")) return "Personalized Blanket";
   if (text.includes("canvas")) return "Custom Canvas Print";

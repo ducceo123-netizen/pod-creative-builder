@@ -89,8 +89,11 @@ export const BRAND_VOICES = [
 
 export const OUTPUT_REQUESTS = [
   "Product breakdown",
+  "Opportunity score",
   "Custom fields map",
   "New product angles",
+  "Ad content matrix",
+  "Component prompts",
   "Design prompts",
   "Mockup prompts",
   "Shopify title and description",
