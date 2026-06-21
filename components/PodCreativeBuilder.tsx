@@ -1094,6 +1094,9 @@ export default function PodCreativeBuilder() {
       if (!response.ok) throw new Error(`Generate request failed with ${response.status}`);
       const data = (await response.json()) as GenerateStrategyResponse & { source?: string; fallbackReason?: string };
       const fallbackUsed = data.source === "local-fallback" || data.source === "local";
+      if (fallbackUsed) {
+        setGenerationError(data.fallbackReason || "Groq was not used, so the local template generated this pack.");
+      }
       applyStrategy(data, {
         usedAI: data.source === "groq",
         generationSource: data.source === "groq" ? "groq" : "local-template",

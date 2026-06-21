@@ -10,7 +10,11 @@ export async function POST(request: Request) {
   }
 
   if (!process.env.GROQ_API_KEY) {
-    return NextResponse.json({ ...buildLocalStrategy(body.project), source: "local" });
+    return NextResponse.json({
+      ...buildLocalStrategy(body.project),
+      source: "local",
+      fallbackReason: "Missing GROQ_API_KEY on the server. Add it to the app environment and restart/redeploy.",
+    });
   }
 
   try {
