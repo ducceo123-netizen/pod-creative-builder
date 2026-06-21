@@ -2,6 +2,23 @@ import { z } from "zod";
 
 const ScoreLevelSchema = z.enum(["low", "medium", "high"]);
 const DifficultyLevelSchema = z.enum(["easy", "medium", "hard"]);
+const StringArraySchema = z.preprocess((value) => {
+  if (Array.isArray(value)) return value.map((item) => (typeof item === "string" ? item : JSON.stringify(item)));
+  if (typeof value === "string") {
+    return value
+      .split(/\n|;/)
+      .map((item) => item.replace(/^[-*\d.\s]+/, "").trim())
+      .filter(Boolean);
+  }
+  if (value == null) return [];
+  return [String(value)];
+}, z.array(z.string()));
+const StringValueSchema = z.preprocess((value) => {
+  if (Array.isArray(value)) return value.map((item) => (typeof item === "string" ? item : JSON.stringify(item))).join("\n");
+  if (value == null) return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}, z.string());
 
 export const ProductScoresSchema = z.object({
   customDepth: ScoreLevelSchema,
@@ -11,80 +28,89 @@ export const ProductScoresSchema = z.object({
 });
 
 export const CustomFieldSchema = z.object({
-  name: z.string(),
-  example: z.string(),
+  name: StringValueSchema,
+  example: StringValueSchema,
   emotionalValue: ScoreLevelSchema,
   difficulty: DifficultyLevelSchema,
   recommended: z.boolean(),
-  shopifyOptionLabel: z.string().optional(),
+  shopifyOptionLabel: StringValueSchema.optional(),
 });
 
 export const AnalysisSchema = z.object({
   id: z.string(),
   projectId: z.string(),
   productBreakdown: z.object({
-    productType: z.string(),
-    coreBuyer: z.string(),
-    coreOccasion: z.string(),
-    coreEmotion: z.string(),
-    visualMechanism: z.string(),
-    personalizationLogic: z.string(),
-    likelyPurchaseReason: z.string(),
+    productType: StringValueSchema,
+    coreBuyer: StringValueSchema,
+    coreOccasion: StringValueSchema,
+    coreEmotion: StringValueSchema,
+    visualMechanism: StringValueSchema,
+    personalizationLogic: StringValueSchema,
+    likelyPurchaseReason: StringValueSchema,
   }),
   customFields: z.array(CustomFieldSchema),
   inspirationRules: z.object({
-    keepAsInspiration: z.array(z.string()),
-    doNotCopy: z.array(z.string()),
-    safeTransformationDirections: z.array(z.string()),
+    keepAsInspiration: StringArraySchema,
+    doNotCopy: StringArraySchema,
+    safeTransformationDirections: StringArraySchema,
   }),
-  improvementOpportunities: z.array(z.string()),
+  improvementOpportunities: StringArraySchema,
   scores: ProductScoresSchema,
 });
 
 export const ConceptSchema = z.object({
-  id: z.string(),
-  projectId: z.string(),
-  name: z.string(),
-  oneLineIdea: z.string(),
-  buyer: z.string(),
-  occasion: z.string(),
-  emotion: z.string(),
-  customFields: z.array(z.string()),
-  designDirection: z.string(),
-  mockupDirection: z.string(),
-  adHook: z.string(),
+  id: StringValueSchema,
+  projectId: StringValueSchema,
+  name: StringValueSchema,
+  oneLineIdea: StringValueSchema,
+  buyer: StringValueSchema,
+  occasion: StringValueSchema,
+  emotion: StringValueSchema,
+  customFields: StringArraySchema,
+  designDirection: StringValueSchema,
+  mockupDirection: StringValueSchema,
+  adHook: StringValueSchema,
   selected: z.boolean().default(false),
   scores: ProductScoresSchema,
 });
 
 export const PromptPackSchema = z.object({
-  id: z.string(),
-  conceptId: z.string(),
-  designPrompt: z.string(),
-  lifestyleMockupPrompt: z.string(),
-  banner21x9Prompt: z.string(),
-  showcase16x9Prompt: z.string(),
-  product468x598Prompt: z.string(),
-  square1x1Prompt: z.string(),
-  reel9x16Prompt: z.string(),
+  id: StringValueSchema,
+  conceptId: StringValueSchema,
+  designPrompt: StringValueSchema,
+  lifestyleMockupPrompt: StringValueSchema,
+  banner21x9Prompt: StringValueSchema,
+  showcase16x9Prompt: StringValueSchema,
+  product468x598Prompt: StringValueSchema,
+  square1x1Prompt: StringValueSchema,
+  reel9x16Prompt: StringValueSchema,
 });
 
 export const CopyPackSchema = z.object({
-  id: z.string(),
-  conceptId: z.string(),
-  shopifyTitles: z.array(z.string()),
-  shortDescription: z.string(),
-  fullDescription: z.string(),
-  bulletBenefits: z.array(z.string()),
-  personalizationInstructions: z.string(),
-  trustNotes: z.array(z.string()),
-  faqs: z.array(z.object({ question: z.string(), answer: z.string() })),
-  tags: z.array(z.string()),
-  metaHooks: z.array(z.string()),
-  primaryTexts: z.array(z.string()),
-  headlines: z.array(z.string()),
-  ugcScriptIdea: z.string(),
-  testingPlan: z.array(z.string()),
+  id: StringValueSchema,
+  conceptId: StringValueSchema,
+  shopifyTitles: StringArraySchema,
+  shortDescription: StringValueSchema,
+  fullDescription: StringValueSchema,
+  bulletBenefits: StringArraySchema,
+  personalizationInstructions: StringValueSchema,
+  trustNotes: StringArraySchema,
+  faqs: z.preprocess((value) => {
+    if (Array.isArray(value)) {
+      return value.map((item) => {
+        if (typeof item === "string") return { question: item, answer: "" };
+        return item;
+      });
+    }
+    if (typeof value === "string") return [{ question: value, answer: "" }];
+    return [];
+  }, z.array(z.object({ question: StringValueSchema, answer: StringValueSchema }))),
+  tags: StringArraySchema,
+  metaHooks: StringArraySchema,
+  primaryTexts: StringArraySchema,
+  headlines: StringArraySchema,
+  ugcScriptIdea: StringValueSchema,
+  testingPlan: StringArraySchema,
 });
 
 export const StrategyResponseSchema = z.object({

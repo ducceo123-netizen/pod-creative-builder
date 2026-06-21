@@ -176,7 +176,7 @@ Rules:
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: prompt },
       ],
-      temperature: 0.72,
+      temperature: 0.45,
       response_format: { type: "json_object" },
     }),
   });
