@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
 import { exportMarkdown } from "@/lib/exportMarkdown";
 import { createProject, generateComponentPromptPack, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
@@ -34,7 +34,7 @@ import type { CopyPack } from "@/types/copyPack";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
-const tabs = ["Analysis", "Custom Map", "Concepts", "Prompts", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
+const tabs = ["Analysis", "Custom Map", "Opportunity", "Angles", "Ad Matrix", "Concepts", "Prompts", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
 const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
 const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
@@ -107,6 +107,41 @@ type CreativeAssetPlan = {
   createdAt: string;
 };
 
+type OpportunityScore = {
+  customDepth: number;
+  emotionalPull: number;
+  adCreativePotential: number;
+  giftability: number;
+  seasonality: number;
+  productionComplexity: number;
+  copycatRisk: number;
+  overall: number;
+  explanations: Record<string, string>;
+};
+
+type CreativeAngleGroup = {
+  group: string;
+  angles: Array<{
+    id: string;
+    name: string;
+    insight: string;
+    hook: string;
+    direction: string;
+  }>;
+};
+
+type AdMatrixRow = {
+  id: string;
+  angleName: string;
+  buyerInsight: string;
+  hook: string;
+  visualDirection: string;
+  primaryText: string;
+  headline: string;
+  cta: string;
+  recommendedAssetType: string;
+};
+
 type CreativeDraft = {
   id: string;
   title: string;
@@ -128,6 +163,7 @@ type CreativeDraft = {
   assetPlans?: CreativeAssetPlan[];
   generationMeta?: GenerationMeta;
   versions?: GenerationVersion[];
+  opportunityScore?: OpportunityScore;
   createdAt: string;
   updatedAt: string;
 };
@@ -176,6 +212,49 @@ function readDrafts(): CreativeDraft[] {
 
 function writeDrafts(drafts: CreativeDraft[]) {
   localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+async function fetchRemoteDrafts(): Promise<CreativeDraft[] | null> {
+  try {
+    const response = await fetch("/api/drafts", { cache: "no-store" });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { source?: string; drafts?: CreativeDraft[] };
+    return data.source === "supabase" ? data.drafts || [] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveRemoteDraft(draft: CreativeDraft) {
+  try {
+    await fetch("/api/drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+  } catch {
+    // LocalStorage remains the offline fallback.
+  }
+}
+
+async function patchRemoteDraft(draft: CreativeDraft) {
+  try {
+    await fetch(`/api/drafts/${encodeURIComponent(draft.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+  } catch {
+    // LocalStorage remains the offline fallback.
+  }
+}
+
+async function deleteRemoteDraft(draftId: string) {
+  try {
+    await fetch(`/api/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+  } catch {
+    // LocalStorage remains the offline fallback.
+  }
 }
 
 function getCurrentDraft(): CreativeDraft | null {
@@ -257,6 +336,7 @@ function buildDraft(args: {
     assetPlans: args.assetPlans,
     generationMeta: args.generationMeta,
     versions: args.versions,
+    opportunityScore: getOpportunityScore(args.project, args.analysis),
     createdAt: args.createdAt || now,
     updatedAt: now,
   };
@@ -291,6 +371,154 @@ function buildAssetPlans(selectedConcepts: Concept[], promptPacks: Record<string
 
 function buildComponentPromptPacks(selectedConcepts: Concept[], productType: string): Record<string, ComponentPromptPack> {
   return Object.fromEntries(selectedConcepts.map((concept) => [concept.id, generateComponentPromptPack(concept, productType)]));
+}
+
+function levelScore(value: "low" | "medium" | "high" | "easy" | "hard" | undefined, inverted = false) {
+  const score = value === "high" || value === "hard" ? 8 : value === "medium" ? 6 : value === "low" || value === "easy" ? 3 : 5;
+  return inverted ? 11 - score : score;
+}
+
+function getOpportunityScore(project: Project, analysis: Analysis | null): OpportunityScore {
+  const normalized = normalizeProject(project);
+  const text = `${project.productTitle || ""} ${project.productDescription || ""} ${project.niche || ""} ${project.occasion || ""}`.toLowerCase();
+  const isGift = /gift|father|mother|birthday|christmas|anniversary|memorial|dad|grandpa|husband|wife/.test(text);
+  const isSeasonal = /father|mother|christmas|valentine|halloween|thanksgiving|birthday/.test(text);
+  const hasPhoto = analysis?.customFields.some((field) => field.name.toLowerCase().includes("photo")) || /photo|face|custom/.test(text);
+  const customDepth = Math.min(10, levelScore(analysis?.scores.customDepth) + (hasPhoto ? 1 : 0));
+  const emotionalPull = Math.min(10, analysis?.productBreakdown.coreEmotion ? 7 : 5);
+  const adCreativePotential = Math.min(10, levelScore(analysis?.scores.adsPotential) + (normalized.normalizedProductType.includes("Squishy") ? 1 : 0));
+  const giftability = isGift ? 8 : 6;
+  const seasonality = isSeasonal ? 8 : 5;
+  const productionComplexity = levelScore(analysis?.scores.productionDifficulty, true);
+  const copycatRisk = levelScore(analysis?.scores.copyRisk);
+  const overall = Number(((customDepth + emotionalPull + adCreativePotential + giftability + seasonality + productionComplexity + (11 - copycatRisk)) / 7).toFixed(1));
+
+  return {
+    customDepth,
+    emotionalPull,
+    adCreativePotential,
+    giftability,
+    seasonality,
+    productionComplexity,
+    copycatRisk,
+    overall,
+    explanations: {
+      customDepth: hasPhoto ? "Photo upload and multiple personalization fields create clear customization depth." : "Based on available custom fields and product specificity.",
+      emotionalPull: analysis?.productBreakdown.coreEmotion || "Emotional pull depends on buyer, occasion, and relationship clarity.",
+      adCreativePotential: analysis?.scores.adsPotential === "high" ? "The concept has strong visual hooks and clear demo potential." : "Ad potential can improve with stronger visual action.",
+      giftability: isGift ? "Buyer and occasion map clearly to a gift purchase." : "Gift angle is present but could be sharpened.",
+      seasonality: isSeasonal ? "The brief includes a seasonal or event-based buying reason." : "No strong seasonal trigger yet.",
+      productionComplexity: "Higher score means easier production relative to personalization depth.",
+      copycatRisk: "Higher risk means stronger transformation rules are needed before production.",
+    },
+  };
+}
+
+function buildCreativeAngleGroups(project: Project, analysis: Analysis | null): CreativeAngleGroup[] {
+  const normalized = normalizeProject(project);
+  const buyer = project.buyerPersona || analysis?.productBreakdown.coreBuyer || "Gift buyer";
+  const occasion = project.occasion || analysis?.productBreakdown.coreOccasion || "gift moment";
+  const product = normalized.normalizedProductType;
+  const isSquishyMagnet = product === "Squishy Acrylic Fridge Magnet";
+  const baseVisual = isSquishyMagnet ? "custom face on cartoon body, squishy belly poke moment, fridge close-up" : analysis?.productBreakdown.visualMechanism || normalized.normalizedVisualDirection;
+
+  const groups: CreativeAngleGroup[] = [
+    {
+      group: "Buyer Angles",
+      angles: [
+        ["Wife Buying For Husband", "She wants a funny custom gift that feels personal without being sentimental.", "Upload his face and turn him into the fridge joke.", baseVisual],
+        ["Kids Buying For Dad", "Kids want a gift Dad will laugh at and use every day.", "The gift the whole family will poke.", "child hand interacting with the product in a bright kitchen"],
+        ["Daughter Buying For Grandpa", "Grandpa gifts work best when they feel affectionate and easy to understand.", "Grandpa's new favorite fridge buddy.", "grandkids laughing near the fridge"],
+      ].map(([name, insight, hook, direction], index) => ({ id: `buyer-${index}`, name, insight, hook, direction })),
+    },
+    {
+      group: "Occasion Angles",
+      angles: [
+        [`${occasion} Gift`, `The shopper needs a ${occasion.toLowerCase()} gift that does not feel generic.`, `Not another boring ${occasion} gift.`, "gift reveal on kitchen counter"],
+        ["Birthday Gag Gift", "Birthdays need low-pressure humor that still feels custom.", "A tiny custom version of him for his birthday.", "close-up product reveal with wrapping paper"],
+        ["Christmas Stocking Stuffer", "Small personalized items work well as surprise add-ons.", "The stocking stuffer everyone notices first.", "holiday fridge or gift table context"],
+      ].map(([name, insight, hook, direction], index) => ({ id: `occasion-${index}`, name, insight, hook, direction })),
+    },
+    {
+      group: "Relationship Angles",
+      angles: [
+        ["Dad Mode", "Relationship labels make the product instantly understandable.", "Dad Mode belongs on the fridge.", "front-facing product with bold relationship label"],
+        ["Husband Joke Gift", "Couple humor can be playful without being mean.", "For the husband who checks the fridge like a job.", "wife placing product on fridge"],
+        ["Office Buddy", "Gag gifts travel beyond home when the product has a desk or cabinet use case.", "Put his snack inspector energy on the office cabinet.", "office cabinet with snacks and sticky notes"],
+      ].map(([name, insight, hook, direction], index) => ({ id: `relationship-${index}`, name, insight, hook, direction })),
+    },
+    {
+      group: "Humor Angles",
+      angles: [
+        ["Pokeable Belly Demo", "The tactile action is the fastest way to explain the product.", "Yes, the belly is pokeable.", "tight hand-poking close-up"],
+        ["Snack Inspector", "Food and fridge behavior creates relatable family humor.", "The official snack inspector has arrived.", "fridge snack shelf context"],
+        ["BBQ Belly Buddy", "Hobby themes help personalize beyond the face upload.", "Grill Boss, now in magnet form.", "summer BBQ kitchen transition scene"],
+      ].map(([name, insight, hook, direction], index) => ({ id: `humor-${index}`, name, insight, hook, direction })),
+    },
+    {
+      group: "UGC And Lifestyle Angles",
+      angles: [
+        ["Unboxing Reaction", "Reaction content sells the personalization payoff.", "Wait until he sees his mini fridge twin.", "phone-shot unboxing reveal"],
+        ["Kitchen Fridge Close-up", "A clean fridge placement shows scale and use case fast.", "The fridge magnet that starts conversations.", "realistic iPhone close-up on stainless fridge"],
+        ["Before And After", "Showing uploaded photo to finished product makes customization clear.", "From photo to pokeable fridge buddy.", "split before-after creative"],
+      ].map(([name, insight, hook, direction], index) => ({ id: `ugc-${index}`, name, insight, hook, direction })),
+    },
+    {
+      group: "Bundle And Retention Angles",
+      angles: [
+        ["Family Set", "Multiple recipients can turn one product into a bundle.", "Make one for Dad, Grandpa, and the office legend.", "three custom variants arranged together"],
+        ["Holiday Set", "Seasonal outfit themes create repeat purchases.", "Swap the outfit. Keep the family joke going.", "holiday, BBQ, and office outfit variants"],
+        ["Add-on Gift", "Small personalized products can lift cart value.", "Add the fridge buddy to the main gift.", "gift box plus product close-up"],
+      ].map(([name, insight, hook, direction], index) => ({ id: `bundle-${index}`, name, insight, hook, direction })),
+    },
+  ];
+
+  if (!isSquishyMagnet) {
+    return groups.map((group) => ({
+      ...group,
+      angles: group.angles.map((angle) => ({
+        ...angle,
+        name: angle.name.replace("Dad", buyer).replace("Husband", buyer).replace("Grandpa", buyer),
+        hook: angle.hook.replace("fridge", product.toLowerCase()).replace("belly", "custom detail"),
+        direction: angle.direction === baseVisual ? baseVisual : `${angle.direction}, ${product.toLowerCase()}, ${normalized.normalizedVisualDirection}`,
+      })),
+    }));
+  }
+
+  return groups;
+}
+
+function buildAdMatrixRows(project: Project, analysis: Analysis | null, concepts: Concept[], copyPacks: Record<string, CopyPack>): AdMatrixRow[] {
+  const selected = concepts.filter((concept) => concept.selected);
+  const fallbackAngles = buildCreativeAngleGroups(project, analysis).flatMap((group) => group.angles).slice(0, 8);
+  const conceptRows = selected.map((concept, index) => {
+    const copy = copyPacks[concept.id];
+    return {
+      id: `concept-matrix-${concept.id}`,
+      angleName: concept.name,
+      buyerInsight: concept.oneLineIdea,
+      hook: copy?.metaHooks[index % Math.max(copy.metaHooks.length, 1)] || concept.adHook,
+      visualDirection: concept.mockupDirection,
+      primaryText: copy?.primaryTexts[index % Math.max(copy.primaryTexts.length, 1)] || `Turn ${analysis?.productBreakdown.coreBuyer || "the recipient"} into a custom ${normalizeProject(project).normalizedProductType.toLowerCase()} with a clear personal moment.`,
+      headline: copy?.headlines[index % Math.max(copy.headlines.length, 1)] || concept.adHook,
+      cta: "Shop Now",
+      recommendedAssetType: index % 2 === 0 ? "Meta 1:1 image, 9:16 UGC reel" : "4:5 lifestyle image, 9:16 demo frame",
+    };
+  });
+
+  const angleRows = fallbackAngles.slice(0, Math.max(0, 10 - conceptRows.length)).map((angle, index) => ({
+    id: `angle-matrix-${angle.id}`,
+    angleName: angle.name,
+    buyerInsight: angle.insight,
+    hook: angle.hook,
+    visualDirection: angle.direction,
+    primaryText: `${angle.insight} Make the product feel original, personal, and easy to understand in the first three seconds.`,
+    headline: angle.hook,
+    cta: "Shop Now",
+    recommendedAssetType: index % 2 === 0 ? "Meta 1:1 image" : "9:16 UGC reel",
+  }));
+
+  return [...conceptRows, ...angleRows];
 }
 
 function hasValue(value: unknown) {
@@ -553,7 +781,8 @@ export default function PodCreativeBuilder() {
   const [activeVersionId, setActiveVersionId] = useState("");
   const [conceptExtras, setConceptExtras] = useState<ConceptExtras>(() => getCurrentDraft()?.conceptExtras || {});
   const [assetPlans, setAssetPlans] = useState<CreativeAssetPlan[]>(() => getCurrentDraft()?.assetPlans || []);
-  const [health, setHealth] = useState<{ groqConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null>(null);
+  const [health, setHealth] = useState<{ groqConfigured: boolean; supabaseConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null>(null);
+  const [draftSyncStatus, setDraftSyncStatus] = useState("Local drafts");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [clearNeedsConfirm, setClearNeedsConfirm] = useState(false);
   const clearConfirmTimer = useRef<number | null>(null);
@@ -579,6 +808,9 @@ export default function PodCreativeBuilder() {
   );
   const displayedActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] || "Analysis";
   const readiness = useMemo(() => getReadiness(project, screenshot), [project, screenshot]);
+  const opportunityScore = useMemo(() => getOpportunityScore(project, analysis), [analysis, project]);
+  const creativeAngleGroups = useMemo(() => buildCreativeAngleGroups(project, analysis), [analysis, project]);
+  const adMatrixRows = useMemo(() => buildAdMatrixRows(project, analysis, concepts, copyPacks), [analysis, concepts, copyPacks, project]);
   const hasGeneratedPack = Boolean(analysis);
   const markdown = useMemo(() => {
     const base = exportMarkdown({ project, analysis, concepts, prompts: promptPacks, componentPrompts: componentPromptPacks, copies: copyPacks, flags: outputFlags });
@@ -605,6 +837,9 @@ export default function PodCreativeBuilder() {
           visualStyle: [normalized.normalizedVisualDirection],
         },
         analysis,
+        opportunityScore,
+        creativeAngleGroups,
+        adMatrixRows,
         concepts: filtered.concepts,
         promptPacks: filtered.promptPacks,
         componentPromptPacks,
@@ -619,8 +854,22 @@ export default function PodCreativeBuilder() {
       null,
       2,
     ));
-  }, [analysis, assetPlans, componentPromptPacks, concepts, copyPacks, generationMeta, project, promptPacks, screenshot, versions]);
+  }, [adMatrixRows, analysis, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, generationMeta, opportunityScore, project, promptPacks, screenshot, versions]);
   const genericExportWarning = useMemo(() => hasGenericOutputWarning(`${markdown}\n${jsonExportValue}`), [jsonExportValue, markdown]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const remoteDrafts = await fetchRemoteDrafts();
+      if (cancelled || !remoteDrafts) return;
+      setDrafts(remoteDrafts);
+      writeDrafts(remoteDrafts);
+      setDraftSyncStatus("Supabase synced");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const updateProject = <K extends keyof Project>(key: K, value: Project[K]) => {
     setProject((current) => ({ ...current, [key]: value, updatedAt: new Date().toISOString() }));
@@ -694,6 +943,7 @@ export default function PodCreativeBuilder() {
     setAssetPlans(nextAssetPlans);
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
+    void saveRemoteDraft(nextDraft);
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
     if (screenshot) localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
     setHasUnsavedChanges(false);
@@ -792,6 +1042,7 @@ export default function PodCreativeBuilder() {
     setDrafts(nextDrafts);
     setCurrentDraftId(draft.id);
     writeDrafts(nextDrafts);
+    void saveRemoteDraft(draft);
     localStorage.setItem(CURRENT_DRAFT_ID_KEY, draft.id);
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(project));
     if (screenshot) {
@@ -861,6 +1112,7 @@ export default function PodCreativeBuilder() {
     const nextDrafts = [copy, ...drafts];
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
+    void saveRemoteDraft(copy);
     setToast("Draft duplicated");
     window.setTimeout(() => setToast(""), 1400);
   };
@@ -871,12 +1123,15 @@ export default function PodCreativeBuilder() {
     );
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
+    const archived = nextDrafts.find((draft) => draft.id === draftId);
+    if (archived) void patchRemoteDraft(archived);
   };
 
   const deleteDraft = (draftId: string) => {
     const nextDrafts = drafts.filter((draft) => draft.id !== draftId);
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
+    void deleteRemoteDraft(draftId);
     if (currentDraftId === draftId) createNewDraft();
   };
 
@@ -897,6 +1152,7 @@ export default function PodCreativeBuilder() {
       const nextDrafts = drafts.filter((draft) => draft.id !== currentDraftId);
       setDrafts(nextDrafts);
       writeDrafts(nextDrafts);
+      void deleteRemoteDraft(currentDraftId);
     }
     localStorage.removeItem(CURRENT_DRAFT_ID_KEY);
     setCurrentDraftId(null);
@@ -1135,6 +1391,7 @@ export default function PodCreativeBuilder() {
             {activeView === "Dashboard" ? (
               <DashboardView
                 drafts={drafts}
+                draftSyncStatus={draftSyncStatus}
                 onCreate={createNewDraft}
                 onOpen={loadDraft}
                 onDuplicate={duplicateDraft}
@@ -1163,31 +1420,38 @@ export default function PodCreativeBuilder() {
                   </div>
                 </section>
 
-            <section className="grid gap-5 xl:grid-cols-[minmax(360px,0.42fr)_minmax(0,0.58fr)]">
-              <div className="space-y-5">
-                <BriefForm
-                  project={project}
-                  screenshot={screenshot}
-                  updateProject={updateProject}
-                  updateScreenshot={updateScreenshotDraft}
-                  onGenerate={generateStrategy}
-                  onSaveDraft={saveDraft}
-                  onClearDraft={clearDraft}
-                  isGenerating={isGenerating}
-                  clearNeedsConfirm={clearNeedsConfirm}
-                />
+                <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
+                  <div className="min-w-0">
+                    <BriefForm
+                      project={project}
+                      screenshot={screenshot}
+                      updateProject={updateProject}
+                      updateScreenshot={updateScreenshotDraft}
+                      onGenerate={generateStrategy}
+                      onSaveDraft={saveDraft}
+                      onClearDraft={clearDraft}
+                      isGenerating={isGenerating}
+                      clearNeedsConfirm={clearNeedsConfirm}
+                    />
+                  </div>
 
-                <BriefSummary
-                  project={project}
-                  screenshot={screenshot}
-                  analysis={analysis}
-                  selectedCount={selectedConcepts.length}
-                  onGenerate={generateStrategy}
-                  isGenerating={isGenerating}
-                  readiness={readiness}
-                />
-              </div>
+                  <BriefSummary
+                    project={project}
+                    screenshot={screenshot}
+                    analysis={analysis}
+                    selectedCount={selectedConcepts.length}
+                    onGenerate={generateStrategy}
+                    isGenerating={isGenerating}
+                    readiness={readiness}
+                    opportunityScore={opportunityScore}
+                    generationMeta={generationMeta}
+                    versions={versions}
+                    onSaveDraft={saveDraft}
+                    onExportMarkdown={() => download("pod-creative-pack.md", markdown, "text/markdown")}
+                  />
+                </section>
 
+            {isGenerating || analysis ? (
             <section ref={outputRef} className="min-w-0 scroll-mt-24 rounded-xl border border-border bg-white shadow-[0_1px_0_rgba(0,0,0,0.04)]">
               <div className="overflow-x-auto border-b border-border p-3">
                 <div className="flex min-w-max items-center gap-1">
@@ -1253,6 +1517,9 @@ export default function PodCreativeBuilder() {
                     ) : null}
                     {displayedActiveTab === "Analysis" && <OverviewTab analysis={analysis} onCopied={showCopied} />}
                     {displayedActiveTab === "Custom Map" && <CustomMapTab analysis={analysis} onCopied={showCopied} />}
+                    {displayedActiveTab === "Opportunity" && <OpportunityTab opportunityScore={opportunityScore} analysis={analysis} onCopied={showCopied} />}
+                    {displayedActiveTab === "Angles" && <AnglesTab angleGroups={creativeAngleGroups} onCopied={showCopied} />}
+                    {displayedActiveTab === "Ad Matrix" && <AdMatrixTab rows={adMatrixRows} onCopied={showCopied} onDownload={download} />}
                     {displayedActiveTab === "Concepts" && (
                       <ConceptsTab
                         concepts={concepts}
@@ -1295,6 +1562,9 @@ export default function PodCreativeBuilder() {
                         componentPromptPacks={componentPromptPacks}
                         copyPacks={copyPacks}
                         selectedConcepts={selectedConcepts}
+                        opportunityScore={opportunityScore}
+                        creativeAngleGroups={creativeAngleGroups}
+                        adMatrixRows={adMatrixRows}
                         analysis={analysis}
                         generationMeta={generationMeta}
                         versions={versions}
@@ -1309,7 +1579,7 @@ export default function PodCreativeBuilder() {
                 )}
               </div>
             </section>
-            </section>
+            ) : null}
               </>
             )}
           </div>
@@ -1322,6 +1592,7 @@ export default function PodCreativeBuilder() {
 
 function DashboardView({
   drafts,
+  draftSyncStatus,
   onCreate,
   onOpen,
   onDuplicate,
@@ -1329,6 +1600,7 @@ function DashboardView({
   onDelete,
 }: {
   drafts: CreativeDraft[];
+  draftSyncStatus: string;
   onCreate: () => void;
   onOpen: (draft: CreativeDraft) => void;
   onDuplicate: (draft: CreativeDraft) => void;
@@ -1345,6 +1617,7 @@ function DashboardView({
           <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Dashboard</p>
           <h1 className="mt-2 text-[28px] font-semibold">Dashboard</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Create POD product strategy packs from competitor references.</p>
+          <span className="mt-3 inline-flex rounded-full border border-border bg-white px-3 py-1 text-xs font-semibold text-secondary">{draftSyncStatus}</span>
         </div>
         <div className="flex gap-2">
         <button type="button" onClick={onCreate} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">
@@ -1402,6 +1675,7 @@ function DashboardView({
               <Detail label="Recent drafts" value={`${visibleDrafts.length}`} />
               <Detail label="Generated drafts" value={`${visibleDrafts.filter((draft) => draft.generationMeta).length}`} />
               <Detail label="Export readiness" value={visibleDrafts.some((draft) => draft.status === "selected") ? "Ready" : "Draft"} />
+              <Detail label="Draft storage" value={draftSyncStatus} />
             </dl>
           </div>
         </div>
@@ -1409,7 +1683,7 @@ function DashboardView({
 
       <div>
         <h2 className="text-lg font-semibold">Recent drafts</h2>
-        <p className="mt-1 text-sm text-secondary">Open, duplicate, archive, or delete local drafts. Drafts stay in this browser until cleared.</p>
+        <p className="mt-1 text-sm text-secondary">Open, duplicate, archive, or delete drafts. Supabase is used when configured, with local drafts as fallback.</p>
       </div>
 
       {!visibleDrafts.length ? (
@@ -1478,7 +1752,7 @@ function SettingsView({
   generationMeta,
   onRefresh,
 }: {
-  health: { groqConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null;
+  health: { groqConfigured: boolean; supabaseConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null;
   generationMeta?: GenerationMeta;
   onRefresh: () => void;
 }) {
@@ -1496,6 +1770,7 @@ function SettingsView({
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <InfoCard title="Groq strategy generation" value={health ? (health.groqConfigured ? "Connected" : "Missing") : "Not checked"} />
+        <InfoCard title="Supabase drafts" value={health ? (health.supabaseConfigured ? "Connected" : "Missing env") : "Not checked"} />
         <InfoCard title="Image provider" value={health ? `${health.imageProvider} · ${health.imageProviderConfigured ? "Configured" : "Missing"}` : "Not checked"} />
         <InfoCard title="Last source" value={getSourceLabel(generationMeta)} />
         <InfoCard title="Fallback used" value={generationMeta?.fallbackUsed ? `Yes · ${generationMeta.fallbackReason || "No reason provided"}` : "No"} />
@@ -1749,6 +2024,11 @@ function BriefSummary({
   onGenerate,
   isGenerating,
   readiness,
+  opportunityScore,
+  generationMeta,
+  versions,
+  onSaveDraft,
+  onExportMarkdown,
 }: {
   project: Project;
   screenshot: ScreenshotState | null;
@@ -1757,6 +2037,11 @@ function BriefSummary({
   onGenerate: () => void;
   isGenerating: boolean;
   readiness: ReadinessResult;
+  opportunityScore: OpportunityScore;
+  generationMeta?: GenerationMeta;
+  versions: GenerationVersion[];
+  onSaveDraft: () => void;
+  onExportMarkdown: () => void;
 }) {
   const normalized = normalizeProject(project);
   const summary = [
@@ -1764,22 +2049,18 @@ function BriefSummary({
     ["Buyer", project.buyerPersona],
     ["Occasion", project.occasion],
     ["Niche", project.niche],
-    ["Brand voice", project.brandVoice?.join(", ")],
     ["Visual style", project.visualStyle?.includes("Other") ? normalized.normalizedVisualDirection : project.visualStyle?.join(", ")],
-    ["Outputs", `${project.outputs?.length || 0} selected`],
-    ["Competitor input", project.competitorUrl || project.productDescription ? "Provided" : "Missing"],
     ["Screenshot", screenshot ? screenshot.name : "Not uploaded"],
-    ["Notes", project.userNotes || project.avoidList ? "Provided" : "Not added"],
   ];
   const ready = readiness.score >= 80;
 
   return (
-    <aside className="h-fit space-y-4 xl:sticky xl:top-28">
-      <div className={cx("rounded-xl border p-6 md:p-8", ready ? "border-black/10 bg-accent" : "border-border bg-white")}>
+    <aside className="h-fit space-y-4 xl:sticky xl:top-24">
+      <div className={cx("rounded-xl border p-5", ready ? "border-black/10 bg-accent" : "border-border bg-white")}>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-2xl font-medium">Creative readiness</h3>
-            <p className="mt-2 text-sm leading-6 text-shade-70">A quick preflight for the brief. Generation stays available while this shows what would improve the pack.</p>
+            <h3 className="text-lg font-semibold">Creative readiness</h3>
+            <p className="mt-1 text-xs leading-5 text-shade-70">Preflight for the brief and generation quality.</p>
           </div>
           <span className={cx("rounded-full border px-3 py-1 text-xs font-medium", ready ? "border-black/10 bg-white/70 text-primary" : "border-border bg-surface-muted text-secondary")}>
             {readiness.label}
@@ -1787,7 +2068,7 @@ function BriefSummary({
         </div>
         <div className="mt-5">
           <div className="flex items-end justify-between gap-4">
-            <p className="text-4xl font-semibold">{readiness.score}%</p>
+            <p className="text-3xl font-semibold">{readiness.score}%</p>
             <p className="text-sm text-secondary">
               {readiness.completed}/{readiness.total} complete
             </p>
@@ -1796,7 +2077,7 @@ function BriefSummary({
             <div className={cx("h-full rounded-full", ready ? "bg-primary" : "bg-shade-70")} style={{ width: `${readiness.score}%` }} />
           </div>
         </div>
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 grid gap-2">
           {summary.map(([label, value]) => (
             <div key={label} className="rounded-lg border border-black/10 bg-white/70 px-3 py-2">
               <p className="text-xs font-medium text-secondary">{label}</p>
@@ -1808,27 +2089,55 @@ function BriefSummary({
           <div className="mt-4 rounded-lg border border-border bg-white/70 p-4">
             <p className="text-sm font-medium text-primary">Helpful next inputs</p>
             <ul className="mt-2 space-y-1 text-sm leading-6 text-secondary">
-              {readiness.missing.slice(0, 4).map((item) => (
+              {readiness.missing.slice(0, 3).map((item) => (
                 <li key={item}>- {item}</li>
               ))}
             </ul>
           </div>
         ) : null}
-        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+        <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <RefreshCw size={16} className={isGenerating ? "animate-spin" : ""} />
           {isGenerating ? "Generating..." : "Generate Strategy"}
         </button>
       </div>
-      <div className="rounded-xl border border-border bg-white p-6">
-        <p className="text-sm font-medium text-secondary">Pack status</p>
-        <p className="mt-2 text-3xl font-semibold">{selectedCount}</p>
-        <p className="text-sm text-secondary">selected concepts ready for prompts, copy, and export.</p>
+      <div className="rounded-xl border border-border bg-white p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-secondary">Opportunity score</p>
+            <p className="mt-1 text-3xl font-semibold">{opportunityScore.overall}/10</p>
+          </div>
+          <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", opportunityScore.overall >= 7.5 ? "bg-accent text-success" : "bg-amber-50 text-warning")}>
+            {opportunityScore.overall >= 7.5 ? "Strong" : "Review"}
+          </span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-secondary">
+          <span className="rounded-lg bg-surface-muted px-3 py-2">Custom {opportunityScore.customDepth}/10</span>
+          <span className="rounded-lg bg-surface-muted px-3 py-2">Ads {opportunityScore.adCreativePotential}/10</span>
+          <span className="rounded-lg bg-surface-muted px-3 py-2">Gift {opportunityScore.giftability}/10</span>
+          <span className="rounded-lg bg-surface-muted px-3 py-2">Risk {opportunityScore.copycatRisk}/10</span>
+        </div>
+      </div>
+      <div className="rounded-xl border border-border bg-white p-5">
+        <p className="text-sm font-medium text-secondary">Generation status</p>
+        <dl className="mt-3 grid gap-2 text-sm">
+          <Detail label="Source" value={getSourceLabel(generationMeta)} />
+          <Detail label="Versions" value={`${versions.length}`} />
+          <Detail label="Selected concepts" value={`${selectedCount}`} />
+        </dl>
         {analysis ? (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <ScoreBadge label="Custom" value={analysis.scores.customDepth} />
             <ScoreBadge label="Ads" value={analysis.scores.adsPotential} />
           </div>
         ) : null}
+        <div className="mt-4 grid gap-2">
+          <button type="button" onClick={onSaveDraft} className="focus-ring h-9 rounded-lg border border-primary bg-white px-3 text-sm font-medium text-primary hover:bg-surface-muted">
+            Save Draft
+          </button>
+          <button type="button" onClick={onExportMarkdown} disabled={!analysis} className="focus-ring h-9 rounded-lg border border-primary bg-white px-3 text-sm font-medium text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50">
+            Export Markdown
+          </button>
+        </div>
       </div>
     </aside>
   );
@@ -1924,6 +2233,186 @@ function OverviewTab({ analysis, onCopied }: { analysis: Analysis; onCopied: () 
         <ListCard title="Keep as inspiration" items={analysis.inspirationRules.keepAsInspiration} />
         <ListCard title="Do not copy" items={analysis.inspirationRules.doNotCopy} danger />
         <ListCard title="Improvement opportunities" items={analysis.improvementOpportunities} />
+      </div>
+    </div>
+  );
+}
+
+function OpportunityTab({ opportunityScore, analysis, onCopied }: { opportunityScore: OpportunityScore; analysis: Analysis; onCopied: () => void }) {
+  const rows = [
+    ["Custom Depth", opportunityScore.customDepth, opportunityScore.explanations.customDepth],
+    ["Emotional Pull", opportunityScore.emotionalPull, opportunityScore.explanations.emotionalPull],
+    ["Ad Creative Potential", opportunityScore.adCreativePotential, opportunityScore.explanations.adCreativePotential],
+    ["Giftability", opportunityScore.giftability, opportunityScore.explanations.giftability],
+    ["Seasonality", opportunityScore.seasonality, opportunityScore.explanations.seasonality],
+    ["Production Complexity", opportunityScore.productionComplexity, opportunityScore.explanations.productionComplexity],
+    ["Copycat Risk", opportunityScore.copycatRisk, opportunityScore.explanations.copycatRisk],
+  ] as const;
+
+  return (
+    <div className="space-y-5">
+      <TabIntro
+        eyebrow="Opportunity"
+        title="Product opportunity score"
+        description="Use this score to decide whether the competitor signal is worth turning into a creative testing pack."
+        action={<CopyButton value={JSON.stringify({ opportunityScore, antiCopyRules: analysis.inspirationRules }, null, 2)} onCopied={onCopied} label="Copy tab" />}
+      />
+      <section className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="rounded-xl border border-border bg-accent p-6">
+          <p className="text-sm font-medium text-secondary">Overall Opportunity</p>
+          <p className="mt-3 text-5xl font-semibold">{opportunityScore.overall}</p>
+          <p className="mt-2 text-sm text-secondary">out of 10</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {rows.map(([label, score, explanation]) => (
+            <article key={label} className="rounded-xl border border-border bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="font-medium text-primary">{label}</h4>
+                <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", score >= 8 ? "bg-accent text-success" : score >= 6 ? "bg-amber-50 text-warning" : "bg-red-50 text-danger")}>
+                  {score}/10
+                </span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-secondary">{explanation}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+      <div className="grid gap-4 md:grid-cols-3">
+        <ListCard title="Keep as inspiration" items={analysis.inspirationRules.keepAsInspiration} />
+        <ListCard title="Change to reduce copy risk" items={analysis.inspirationRules.safeTransformationDirections} />
+        <ListCard title="Do not copy" items={analysis.inspirationRules.doNotCopy} danger />
+      </div>
+    </div>
+  );
+}
+
+function AnglesTab({ angleGroups, onCopied }: { angleGroups: CreativeAngleGroup[]; onCopied: () => void }) {
+  const value = JSON.stringify(angleGroups, null, 2);
+
+  return (
+    <div className="space-y-5">
+      <TabIntro
+        eyebrow="Angles"
+        title="Creative scaling angles"
+        description="Use these grouped directions to scale buyer, occasion, humor, UGC, lifestyle, and bundle tests."
+        action={<CopyButton value={value} onCopied={onCopied} label="Copy tab" />}
+      />
+      <div className="grid gap-4">
+        {angleGroups.map((group) => (
+          <details key={group.group} open className="border-b border-border pb-4 last:border-b-0">
+            <summary className="cursor-pointer text-lg font-semibold text-primary">{group.group}</summary>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {group.angles.map((angle) => (
+                <article key={angle.id} className="rounded-xl border border-border bg-white p-4">
+                  <h4 className="font-medium text-primary">{angle.name}</h4>
+                  <p className="mt-2 text-sm leading-6 text-secondary">{angle.insight}</p>
+                  <p className="mt-3 rounded-lg bg-surface-muted px-3 py-2 text-sm font-medium text-primary">{angle.hook}</p>
+                  <p className="mt-3 text-xs leading-5 text-secondary">{angle.direction}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <CopyButton value={JSON.stringify(angle, null, 2)} onCopied={onCopied} label="Copy angle" />
+                    <button type="button" disabled className="inline-flex h-9 cursor-not-allowed items-center rounded-lg border border-border bg-surface-muted px-3 text-xs font-medium text-secondary">
+                      Generate concept later
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </details>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AdMatrixTab({
+  rows,
+  onCopied,
+  onDownload,
+}: {
+  rows: AdMatrixRow[];
+  onCopied: () => void;
+  onDownload: (name: string, value: string, type: string) => void;
+}) {
+  const markdown = rows
+    .map(
+      (row) => `## ${row.angleName}
+- Buyer insight: ${row.buyerInsight}
+- Hook: ${row.hook}
+- Visual direction: ${row.visualDirection}
+- Primary text: ${row.primaryText}
+- Headline: ${row.headline}
+- CTA: ${row.cta}
+- Asset type: ${row.recommendedAssetType}`,
+    )
+    .join("\n\n");
+  const csv = [
+    ["Angle Name", "Buyer Insight", "Hook", "Visual Direction", "Primary Text", "Headline", "CTA", "Recommended Asset Type"],
+    ...rows.map((row) => [row.angleName, row.buyerInsight, row.hook, row.visualDirection, row.primaryText, row.headline, row.cta, row.recommendedAssetType]),
+  ]
+    .map((cols) => cols.map((col) => `"${col.replaceAll('"', '""')}"`).join(","))
+    .join("\n");
+
+  return (
+    <div className="space-y-5">
+      <TabIntro
+        eyebrow="Ad Matrix"
+        title="Meta ad content matrix"
+        description="A practical grid for turning concepts and angles into Meta image, lifestyle, and UGC tests."
+        action={
+          <>
+            <CopyButton value={markdown} onCopied={onCopied} label="Copy matrix" />
+            <button type="button" onClick={() => onDownload("ad-content-matrix.csv", csv, "text/csv")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+              <Download size={16} />
+              Export CSV
+            </button>
+          </>
+        }
+      />
+      <div className="hidden overflow-x-auto rounded-xl border border-border lg:block">
+        <table className="w-full min-w-[1100px] border-collapse bg-white text-left text-sm">
+          <thead className="bg-surface-muted text-xs uppercase tracking-[0.06em] text-secondary">
+            <tr>
+              {["Angle Name", "Buyer Insight", "Hook", "Visual Direction", "Primary Text", "Headline", "CTA", "Asset Type", "Copy"].map((head) => (
+                <th key={head} className="px-4 py-3 font-medium">{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className="border-t border-border align-top">
+                <td className="px-4 py-3 font-semibold">{row.angleName}</td>
+                <td className="px-4 py-3 text-secondary">{row.buyerInsight}</td>
+                <td className="px-4 py-3 text-primary">{row.hook}</td>
+                <td className="px-4 py-3 text-secondary">{row.visualDirection}</td>
+                <td className="px-4 py-3 text-secondary">{row.primaryText}</td>
+                <td className="px-4 py-3 text-primary">{row.headline}</td>
+                <td className="px-4 py-3">{row.cta}</td>
+                <td className="px-4 py-3 text-secondary">{row.recommendedAssetType}</td>
+                <td className="px-4 py-3">
+                  <CopyButton value={JSON.stringify(row, null, 2)} onCopied={onCopied} label="Copy" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="grid gap-3 lg:hidden">
+        {rows.map((row) => (
+          <article key={row.id} className="rounded-xl border border-border bg-white p-4">
+            <h4 className="font-medium">{row.angleName}</h4>
+            <p className="mt-2 text-sm leading-6 text-secondary">{row.buyerInsight}</p>
+            <p className="mt-3 rounded-lg bg-surface-muted px-3 py-2 text-sm font-medium">{row.hook}</p>
+            <dl className="mt-3 grid gap-2 text-sm">
+              <Detail label="Visual" value={row.visualDirection} />
+              <Detail label="Primary text" value={row.primaryText} />
+              <Detail label="Headline" value={row.headline} />
+              <Detail label="Asset type" value={row.recommendedAssetType} />
+            </dl>
+            <div className="mt-3">
+              <CopyButton value={JSON.stringify(row, null, 2)} onCopied={onCopied} label="Copy row" />
+            </div>
+          </article>
+        ))}
       </div>
     </div>
   );
@@ -2452,6 +2941,9 @@ function ExportTab({
   componentPromptPacks,
   copyPacks,
   selectedConcepts,
+  opportunityScore,
+  creativeAngleGroups,
+  adMatrixRows,
   analysis,
   generationMeta,
   versions,
@@ -2467,6 +2959,9 @@ function ExportTab({
   componentPromptPacks: Record<string, ComponentPromptPack>;
   copyPacks: Record<string, CopyPack>;
   selectedConcepts: Concept[];
+  opportunityScore: OpportunityScore;
+  creativeAngleGroups: CreativeAngleGroup[];
+  adMatrixRows: AdMatrixRow[];
   analysis: Analysis | null;
   generationMeta?: GenerationMeta;
   versions: GenerationVersion[];
@@ -2479,6 +2974,13 @@ function ExportTab({
   const assetPromptPack = assetPlans.map((asset) => `## ${asset.title}\n- Type: ${asset.type}\n- Ratio: ${asset.ratio}\n\n${asset.prompt}`).join("\n\n");
   const componentPromptMarkdown = formatComponentPromptMarkdown(selectedConcepts, componentPromptPacks);
   const componentPromptJson = JSON.stringify(selectedConcepts.map((concept) => componentPromptPacks[concept.id]).filter(Boolean), null, 2);
+  const opportunityPack = JSON.stringify(opportunityScore, null, 2);
+  const anglePack = creativeAngleGroups
+    .map((group) => `# ${group.group}\n\n${group.angles.map((angle) => `## ${angle.name}\n- Insight: ${angle.insight}\n- Hook: ${angle.hook}\n- Direction: ${angle.direction}`).join("\n\n")}`)
+    .join("\n\n");
+  const adMatrixPack = adMatrixRows
+    .map((row) => `## ${row.angleName}\n- Buyer insight: ${row.buyerInsight}\n- Hook: ${row.hook}\n- Visual direction: ${row.visualDirection}\n- Primary text: ${row.primaryText}\n- Headline: ${row.headline}\n- CTA: ${row.cta}\n- Asset type: ${row.recommendedAssetType}`)
+    .join("\n\n");
   const shopifyPack = selectedConcepts
     .map((concept) => {
       const pack = copyPacks[concept.id];
@@ -2543,6 +3045,9 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {[
+          ["Opportunity Score", "opportunity-score.json", opportunityPack, "application/json"],
+          ["Creative Angles", "creative-angles.md", anglePack || "No creative angles generated yet.", "text/markdown"],
+          ["Ad Matrix", "ad-content-matrix.md", adMatrixPack || "No ad matrix generated yet.", "text/markdown"],
           ["Component Prompt Pack", "component-prompts.md", componentPromptMarkdown || "No component prompts generated yet.", "text/markdown"],
           ["Component Prompts JSON", "component-prompts.json", componentPromptJson, "application/json"],
           ["Creative Prompt Pack", "creative-prompt-pack.txt", assetPromptPack || "No asset prompts planned yet.", "text/plain"],

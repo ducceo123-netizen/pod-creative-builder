@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isSupabaseConfigured } from "@/lib/supabaseRest";
 
 export async function GET() {
   const imageProvider = process.env.IMAGE_PROVIDER || "none";
@@ -10,6 +11,7 @@ export async function GET() {
 
   return NextResponse.json({
     groqConfigured: Boolean(process.env.GROQ_API_KEY),
+    supabaseConfigured: isSupabaseConfigured(),
     imageProvider,
     imageProviderConfigured,
     appVersion: "0.2.0",
