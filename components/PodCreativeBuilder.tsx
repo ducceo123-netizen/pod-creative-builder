@@ -984,12 +984,12 @@ export default function PodCreativeBuilder() {
       const remoteDrafts = await fetchRemoteDrafts();
       if (cancelled) return;
       if (!remoteDrafts) {
-        setDraftSyncStatus("Saved locally");
+        setDraftSyncStatus("Local fallback active");
         return;
       }
       setDrafts(remoteDrafts);
       writeDrafts(remoteDrafts);
-      setDraftSyncStatus("Supabase synced");
+      setDraftSyncStatus("Supabase workspace");
     })();
     return () => {
       cancelled = true;
@@ -1942,15 +1942,17 @@ function DashboardView({
 
       <div>
         <h2 className="text-lg font-semibold">Recent drafts</h2>
-        <p className="mt-1 text-sm text-secondary">Open, duplicate, archive, or delete drafts. Drafts are saved to your workspace when Supabase is connected.</p>
+        <p className="mt-1 text-sm text-secondary">Open, duplicate, archive, or delete drafts. Drafts sync through the Supabase workspace when connected.</p>
       </div>
 
       {!visibleDrafts.length ? (
         <div className="rounded-xl border border-dashed border-border bg-white p-10 text-center">
-          <h3 className="text-2xl font-medium">No saved drafts yet.</h3>
-          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">Start with one competitor signal. After analysis, the draft will save to your workspace and reappear here.</p>
+          <h3 className="text-2xl font-medium">Start with one competitor product</h3>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">
+            Paste a competitor product URL or upload a screenshot. The tool will infer product type, buyer, custom fields, ad angles, and prompt packs.
+          </p>
           <button type="button" onClick={onCreate} className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
-            Analyze first product
+            Analyze Product
           </button>
         </div>
       ) : (
@@ -2045,8 +2047,26 @@ function DashboardView({
           </div>
 
           {!filteredDrafts.length ? (
-            <div className="rounded-xl border border-dashed border-border bg-white p-8 text-center text-sm text-secondary">
-              No drafts match these filters.
+            <div className="rounded-xl border border-dashed border-border bg-white p-8 text-center">
+              <h3 className="text-lg font-semibold">No drafts match these filters.</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">Clear the filters to get back to your full workspace, or analyze a new competitor product.</p>
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftSearch("");
+                    setProductFilter("");
+                    setOccasionFilter("");
+                    setStatusFilter("");
+                  }}
+                  className="focus-ring inline-flex h-10 items-center rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted"
+                >
+                  Clear filters
+                </button>
+                <button type="button" onClick={onCreate} className="focus-ring inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70">
+                  Analyze Product
+                </button>
+              </div>
             </div>
           ) : null}
         </div>
@@ -2080,7 +2100,7 @@ function SettingsView({
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <InfoCard title="Groq strategy generation" value={health ? (health.groqConfigured ? "Connected" : "Missing") : "Not checked"} />
-        <InfoCard title="Supabase drafts" value={health ? (health.supabaseConfigured ? "Connected" : "Missing env") : "Not checked"} />
+        <InfoCard title="Supabase workspace" value={health ? (health.supabaseConfigured ? "Connected" : "Missing env") : "Not checked"} />
         <InfoCard title="Image provider" value={health ? `${health.imageProvider} · ${health.imageProviderConfigured ? "Configured" : "Missing"}` : "Not checked"} />
         <InfoCard title="Last source" value={getSourceLabel(generationMeta)} />
         <InfoCard title="Fallback used" value={generationMeta?.fallbackUsed ? `Yes · ${generationMeta.fallbackReason || "No reason provided"}` : "No"} />
