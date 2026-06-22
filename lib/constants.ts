@@ -4,7 +4,7 @@ export const PRODUCT_TYPES = [
   "Stained Glass Suncatcher",
   "Custom Photo Cap",
   "Personalized Mug",
-  "Custom T-Shirt",
+  "Personalized T-Shirt",
   "Personalized Ornament",
   "Personalized Blanket",
   "Custom Canvas Print",
