@@ -296,6 +296,18 @@ async function saveRemoteExport(record: ExportRecord) {
   }
 }
 
+async function saveRemoteArtworkAssets(draftId: string, assets: ArtworkAsset[]) {
+  try {
+    await fetch("/api/artwork-assets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId, assets }),
+    });
+  } catch {
+    // Draft payload remains the source of truth if asset row sync is unavailable.
+  }
+}
+
 async function patchRemoteDraft(draft: CreativeDraft) {
   try {
     await fetch(`/api/drafts/${encodeURIComponent(draft.id)}`, {
@@ -1142,6 +1154,7 @@ export default function PodCreativeBuilder() {
     void (async () => {
       await saveRemoteDraft(nextDraft);
       await saveRemoteGeneration(version);
+      await saveRemoteArtworkAssets(nextDraft.id, nextArtworkAssets);
     })();
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
     if (screenshot) localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
@@ -1224,6 +1237,50 @@ export default function PodCreativeBuilder() {
     setCopyPacks(nextCopies);
   };
 
+  const persistArtworkAssets = (nextArtworkAssets: ArtworkAsset[]) => {
+    setArtworkAssets(nextArtworkAssets);
+    const existing = currentDraftId ? drafts.find((draft) => draft.id === currentDraftId) : null;
+    if (!currentDraftId || !existing) {
+      setHasUnsavedChanges(true);
+      return;
+    }
+
+    const draft = buildDraft({
+      id: currentDraftId,
+      project,
+      analysis,
+      concepts,
+      promptPacks,
+      artworkAssets: nextArtworkAssets,
+      componentPromptPacks,
+      copyPacks,
+      screenshot,
+      conceptExtras,
+      assetPlans,
+      generationMeta,
+      versions,
+      exportRecords,
+      inferredContext,
+      createdAt: existing.createdAt,
+    });
+    const nextDrafts = drafts.map((item) => (item.id === draft.id ? draft : item));
+    setDrafts(nextDrafts);
+    writeDrafts(nextDrafts);
+    void (async () => {
+      await saveRemoteDraft(draft);
+      await saveRemoteArtworkAssets(draft.id, nextArtworkAssets);
+    })();
+    setHasUnsavedChanges(false);
+  };
+
+  const updateArtworkAssetStatus = (assetId: string, status: ArtworkAsset["status"]) => {
+    const now = new Date().toISOString();
+    const nextArtworkAssets = artworkAssets.map((asset) => (asset.id === assetId ? { ...asset, status, updatedAt: now } : asset));
+    persistArtworkAssets(nextArtworkAssets);
+    setToast(`Asset marked ${status}`);
+    window.setTimeout(() => setToast(""), 1400);
+  };
+
   const saveDraft = () => {
     const existing = currentDraftId ? drafts.find((draft) => draft.id === currentDraftId) : null;
     const draft = buildDraft({
@@ -1248,7 +1305,10 @@ export default function PodCreativeBuilder() {
     setDrafts(nextDrafts);
     setCurrentDraftId(draft.id);
     writeDrafts(nextDrafts);
-    void saveRemoteDraft(draft);
+    void (async () => {
+      await saveRemoteDraft(draft);
+      await saveRemoteArtworkAssets(draft.id, artworkAssets);
+    })();
     localStorage.setItem(CURRENT_DRAFT_ID_KEY, draft.id);
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(project));
     if (screenshot) {
@@ -1813,6 +1873,7 @@ export default function PodCreativeBuilder() {
                         project={project}
                         selectedConcepts={selectedConcepts}
                         artworkAssets={artworkAssets}
+                        onStatusChange={updateArtworkAssetStatus}
                         onCopied={showCopied}
                         onDownload={download}
                       />
@@ -1902,7 +1963,7 @@ function DashboardView({
   const archivedDrafts = drafts.filter((draft) => draft.status === "archived");
   const generatedDrafts = visibleDrafts.filter((draft) => draft.generationMeta);
   const highOpportunityDrafts = visibleDrafts.filter((draft) => (draft.opportunityScore?.overall || 0) >= 7.5);
-  const promptReadyDrafts = visibleDrafts.filter((draft) => draft.status === "prompt-ready" || (draft.componentPromptPacks && Object.keys(draft.componentPromptPacks).length > 0));
+  const promptReadyDrafts = visibleDrafts.filter((draft) => (draft.artworkAssets?.length || 0) > 0 || draft.status === "prompt-ready" || (draft.componentPromptPacks && Object.keys(draft.componentPromptPacks).length > 0));
   const exportedDrafts = visibleDrafts.filter((draft) => draft.status === "exported");
   const statusOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.status))).sort();
   const productOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.productType).filter(Boolean))).sort();
@@ -1924,6 +1985,11 @@ function DashboardView({
     link.download = `${draft.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "pod-draft"}.json`;
     link.click();
     URL.revokeObjectURL(href);
+  };
+  const getAssetProgress = (draft: CreativeDraft) => {
+    const assets = draft.artworkAssets || [];
+    const copied = assets.filter((asset) => asset.status !== "Not Started").length;
+    return assets.length ? `${copied}/${assets.length} assets started` : "No asset pack";
   };
 
   return (
@@ -2043,7 +2109,10 @@ function DashboardView({
                       <span className="rounded-full border border-black/10 bg-accent px-3 py-1 text-xs font-medium capitalize">{draft.status}</span>
                     </td>
                     <td className="px-4 py-3 text-secondary">{draft.opportunityScore ? `${draft.opportunityScore.overall}/10` : "Not scored"}</td>
-                    <td className="px-4 py-3 text-secondary">{formatDate(draft.updatedAt)}</td>
+                    <td className="px-4 py-3 text-secondary">
+                      <div>{formatDate(draft.updatedAt)}</div>
+                      <div className="mt-1 text-xs">{getAssetProgress(draft)}</div>
+                    </td>
                     <td className="px-4 py-3 text-secondary" title={getSourceHelp(draft.generationMeta)}>{getSourceLabel(draft.generationMeta)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
@@ -2074,6 +2143,7 @@ function DashboardView({
                   <Detail label="Product" value={draft.productType || "Not set"} />
                   <Detail label="Occasion" value={draft.occasion || "Not set"} />
                   <Detail label="Opportunity" value={draft.opportunityScore ? `${draft.opportunityScore.overall}/10` : "Not scored"} />
+                  <Detail label="Artwork assets" value={getAssetProgress(draft)} />
                   <Detail label="Source" value={getSourceLabel(draft.generationMeta)} />
                   <Detail label="Updated" value={formatDate(draft.updatedAt)} />
                 </dl>
@@ -3146,12 +3216,14 @@ function ArtworkAssetsTab({
   project,
   selectedConcepts,
   artworkAssets,
+  onStatusChange,
   onCopied,
   onDownload,
 }: {
   project: Project;
   selectedConcepts: Concept[];
   artworkAssets: ArtworkAsset[];
+  onStatusChange: (assetId: string, status: ArtworkAsset["status"]) => void;
   onCopied: () => void;
   onDownload: (name: string, value: string, type: string) => void;
 }) {
@@ -3241,11 +3313,61 @@ function ArtworkAssetsTab({
                         </div>
                         <p className="mt-3 max-h-36 overflow-auto rounded-lg bg-surface-muted p-3 font-mono text-xs leading-5 text-secondary">{asset.prompt}</p>
                         <div className="mt-4 flex flex-wrap gap-2">
-                          <CopyButton value={asset.prompt} onCopied={onCopied} label="Copy Prompt" />
-                          <CopyButton value={formatArtworkToolBrief(project, asset)} onCopied={onCopied} label="Copy For ChatGPT" />
-                          <CopyButton value={`${asset.prompt}\n\n--ar ${(asset.recommendedRatio || "1:1").replace(":", ":")} --style raw`} onCopied={onCopied} label="Copy For Midjourney" />
-                          <CopyButton value={`${asset.prompt}\n\nTypography must be original, readable, and print-ready. Avoid copied slogans.`} onCopied={onCopied} label="Copy For Ideogram" />
-                          <CopyButton value={`Figma design brief\n\n${formatArtworkToolBrief(project, asset)}`} onCopied={onCopied} label="Copy Figma Brief" />
+                          <CopyButton
+                            value={asset.prompt}
+                            onCopied={() => {
+                              onStatusChange(asset.id, "Copied");
+                              onCopied();
+                            }}
+                            label="Copy Prompt"
+                          />
+                          <CopyButton
+                            value={formatArtworkToolBrief(project, asset)}
+                            onCopied={() => {
+                              onStatusChange(asset.id, "Copied");
+                              onCopied();
+                            }}
+                            label="Copy For ChatGPT"
+                          />
+                          <CopyButton
+                            value={`${asset.prompt}\n\n--ar ${(asset.recommendedRatio || "1:1").replace(":", ":")} --style raw`}
+                            onCopied={() => {
+                              onStatusChange(asset.id, "Copied");
+                              onCopied();
+                            }}
+                            label="Copy For Midjourney"
+                          />
+                          <CopyButton
+                            value={`${asset.prompt}\n\nTypography must be original, readable, and print-ready. Avoid copied slogans.`}
+                            onCopied={() => {
+                              onStatusChange(asset.id, "Copied");
+                              onCopied();
+                            }}
+                            label="Copy For Ideogram"
+                          />
+                          <CopyButton
+                            value={`Figma design brief\n\n${formatArtworkToolBrief(project, asset)}`}
+                            onCopied={() => {
+                              onStatusChange(asset.id, "Copied");
+                              onCopied();
+                            }}
+                            label="Copy Figma Brief"
+                          />
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+                          {(["Copied", "Generated Externally", "Approved", "Needs Revision"] as const).map((status) => (
+                            <button
+                              key={status}
+                              type="button"
+                              onClick={() => onStatusChange(asset.id, status)}
+                              className={cx(
+                                "focus-ring h-8 rounded-lg border px-3 text-xs font-medium",
+                                asset.status === status ? "border-primary bg-primary text-white" : "border-border bg-white text-secondary hover:bg-surface-muted",
+                              )}
+                            >
+                              {status}
+                            </button>
+                          ))}
                         </div>
                       </article>
                     ))}
