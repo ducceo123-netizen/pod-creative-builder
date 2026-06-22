@@ -90,6 +90,17 @@ type GenerationVersion = {
   createdAt: string;
 };
 
+type ExportRecord = {
+  id: string;
+  draftId?: string | null;
+  exportType: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+};
+
 type InferredProjectContext = {
   normalizedProductType: string;
   buyerPersona: string;
@@ -181,6 +192,7 @@ type CreativeDraft = {
   assetPlans?: CreativeAssetPlan[];
   generationMeta?: GenerationMeta;
   versions?: GenerationVersion[];
+  exportRecords?: ExportRecord[];
   opportunityScore?: OpportunityScore;
   inferredContext?: InferredProjectContext | null;
   createdAt: string;
@@ -256,6 +268,30 @@ async function saveRemoteDraft(draft: CreativeDraft) {
   }
 }
 
+async function saveRemoteGeneration(version: GenerationVersion) {
+  try {
+    await fetch("/api/generations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(version),
+    });
+  } catch {
+    // Draft state remains usable even if history sync is unavailable.
+  }
+}
+
+async function saveRemoteExport(record: ExportRecord) {
+  try {
+    await fetch("/api/exports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    });
+  } catch {
+    // Export download already completed; history sync can retry on a later export.
+  }
+}
+
 async function patchRemoteDraft(draft: CreativeDraft) {
   try {
     await fetch(`/api/drafts/${encodeURIComponent(draft.id)}`, {
@@ -320,6 +356,13 @@ function formatDate(value?: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
+function getExportType(filename: string, contentType: string) {
+  if (contentType.includes("json") || filename.endsWith(".json")) return "json";
+  if (contentType.includes("markdown") || filename.endsWith(".md")) return "markdown";
+  if (contentType.includes("text") || filename.endsWith(".txt")) return "text";
+  return filename.split(".").pop() || "file";
+}
+
 function buildDraft(args: {
   id?: string;
   project: Project;
@@ -333,6 +376,7 @@ function buildDraft(args: {
   assetPlans: CreativeAssetPlan[];
   generationMeta?: GenerationMeta;
   versions: GenerationVersion[];
+  exportRecords: ExportRecord[];
   inferredContext?: InferredProjectContext | null;
   createdAt?: string;
 }): CreativeDraft {
@@ -359,6 +403,7 @@ function buildDraft(args: {
     assetPlans: args.assetPlans,
     generationMeta: args.generationMeta,
     versions: args.versions,
+    exportRecords: args.exportRecords,
     opportunityScore: getOpportunityScore(args.project, args.analysis),
     inferredContext: args.inferredContext || null,
     createdAt: args.createdAt || now,
@@ -626,6 +671,8 @@ function getReadiness(project: Project, screenshot: ScreenshotState | null): Rea
 }
 
 function formatFileSize(size: number) {
+  if (!size) return "0 B";
+  if (size < 1024) return `${size} B`;
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(size / 1024))} KB`;
 }
@@ -849,6 +896,7 @@ export default function PodCreativeBuilder() {
   });
   const [generationMeta, setGenerationMeta] = useState<GenerationMeta | undefined>(() => getCurrentDraft()?.generationMeta);
   const [versions, setVersions] = useState<GenerationVersion[]>(() => getCurrentDraft()?.versions || []);
+  const [exportRecords, setExportRecords] = useState<ExportRecord[]>(() => getCurrentDraft()?.exportRecords || []);
   const [inferredContext, setInferredContext] = useState<InferredProjectContext | null>(() => getCurrentDraft()?.inferredContext || null);
   const [activeVersionId, setActiveVersionId] = useState("");
   const [conceptExtras, setConceptExtras] = useState<ConceptExtras>(() => getCurrentDraft()?.conceptExtras || {});
@@ -919,6 +967,7 @@ export default function PodCreativeBuilder() {
         assetPlans,
         generationMeta,
         versions,
+        exportRecords,
         screenshot: screenshot ? { name: screenshot.name, type: screenshot.type, size: screenshot.size } : null,
         screenshotIncluded: Boolean(screenshot),
         exportedAt: new Date().toISOString(),
@@ -926,7 +975,7 @@ export default function PodCreativeBuilder() {
       null,
       2,
     ));
-  }, [adMatrixRows, analysis, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, generationMeta, opportunityScore, project, promptPacks, screenshot, versions]);
+  }, [adMatrixRows, analysis, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, exportRecords, generationMeta, opportunityScore, project, promptPacks, screenshot, versions]);
   const genericExportWarning = useMemo(() => hasGenericOutputWarning(`${markdown}\n${jsonExportValue}`), [jsonExportValue, markdown]);
 
   useEffect(() => {
@@ -997,6 +1046,7 @@ export default function PodCreativeBuilder() {
       assetPlans,
       generationMeta,
       versions,
+      exportRecords,
       inferredContext: inferred,
       createdAt: existing?.createdAt,
     });
@@ -1053,6 +1103,7 @@ export default function PodCreativeBuilder() {
       assetPlans: nextAssetPlans,
       generationMeta: meta,
       versions: nextVersions,
+      exportRecords,
       inferredContext,
       createdAt: existing?.createdAt,
     });
@@ -1074,6 +1125,7 @@ export default function PodCreativeBuilder() {
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
     void saveRemoteDraft(nextDraft);
+    void saveRemoteGeneration(version);
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
     if (screenshot) localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
     setHasUnsavedChanges(false);
@@ -1169,6 +1221,7 @@ export default function PodCreativeBuilder() {
       assetPlans,
       generationMeta,
       versions,
+      exportRecords,
       inferredContext,
       createdAt: existing?.createdAt,
     });
@@ -1204,6 +1257,7 @@ export default function PodCreativeBuilder() {
     setAssetPlans(draft.assetPlans || []);
     setGenerationMeta(draft.generationMeta);
     setVersions(draft.versions || []);
+    setExportRecords(draft.exportRecords || []);
     setInferredContext(draft.inferredContext || null);
     setStrategySource(getSourceLabel(draft.generationMeta));
     setActiveView("Product Brief");
@@ -1229,6 +1283,7 @@ export default function PodCreativeBuilder() {
     setAssetPlans([]);
     setGenerationMeta(undefined);
     setVersions([]);
+    setExportRecords([]);
     setInferredContext(null);
     setStrategySource("");
     setActiveView("Product Brief");
@@ -1306,6 +1361,7 @@ export default function PodCreativeBuilder() {
     setAssetPlans([]);
     setGenerationMeta(undefined);
     setVersions([]);
+    setExportRecords([]);
     setInferredContext(null);
     setHasUnsavedChanges(false);
     setClearNeedsConfirm(false);
@@ -1373,14 +1429,57 @@ export default function PodCreativeBuilder() {
 
   const download = (name: string, value: string, type: string) => {
     const blob = new Blob([value], { type });
+    const draftId = currentDraftId || id("draft");
+    const record: ExportRecord = {
+      id: id("export"),
+      draftId,
+      exportType: getExportType(name, type),
+      filename: name,
+      contentType: type,
+      sizeBytes: blob.size,
+      metadata: {
+        activeTab: displayedActiveTab,
+        activeVersionId: activeVersionId || versions[0]?.id || null,
+        generationSource: generationMeta?.generationSource || null,
+      },
+      createdAt: new Date().toISOString(),
+    };
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
     link.download = name;
     link.click();
     URL.revokeObjectURL(href);
-    setProject((current) => ({ ...current, status: "exported" }));
-    window.setTimeout(() => saveDraft(), 0);
+    const nextExportRecords = [record, ...exportRecords].slice(0, 25);
+    const nextProject: Project = { ...project, status: "exported", updatedAt: new Date().toISOString() };
+    const existing = drafts.find((draft) => draft.id === draftId);
+    const nextDraft = buildDraft({
+      id: draftId,
+      project: nextProject,
+      analysis,
+      concepts,
+      promptPacks,
+      componentPromptPacks,
+      copyPacks,
+      screenshot,
+      conceptExtras,
+      assetPlans,
+      generationMeta,
+      versions,
+      exportRecords: nextExportRecords,
+      inferredContext,
+      createdAt: existing?.createdAt,
+    });
+    const nextDrafts = existing ? drafts.map((draft) => (draft.id === draftId ? nextDraft : draft)) : [nextDraft, ...drafts];
+    setExportRecords(nextExportRecords);
+    setProject(nextProject);
+    setCurrentDraftId(draftId);
+    setDrafts(nextDrafts);
+    writeDrafts(nextDrafts);
+    localStorage.setItem(CURRENT_DRAFT_ID_KEY, draftId);
+    localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
+    void saveRemoteExport(record);
+    void saveRemoteDraft(nextDraft);
   };
 
   const openSettings = async () => {
@@ -1658,6 +1757,7 @@ export default function PodCreativeBuilder() {
                     {strategySource ? (
                       <p className="mb-4 text-xs font-medium uppercase tracking-[0.06em] text-secondary">Generated via {strategySource}</p>
                     ) : null}
+                    <VersionHistoryPanel versions={versions} activeVersionId={activeVersionId} onRestore={restoreVersion} />
                     {displayedActiveTab === "Analysis" && <OverviewTab analysis={analysis} onCopied={showCopied} />}
                     {displayedActiveTab === "Custom Map" && <CustomMapTab analysis={analysis} onCopied={showCopied} />}
                     {displayedActiveTab === "Opportunity" && <OpportunityTab opportunityScore={opportunityScore} analysis={analysis} onCopied={showCopied} />}
@@ -1712,6 +1812,7 @@ export default function PodCreativeBuilder() {
                         analysis={analysis}
                         generationMeta={generationMeta}
                         versions={versions}
+                        exportRecords={exportRecords}
                         screenshotIncluded={Boolean(screenshot)}
                         flags={outputFlags}
                         hasGenericWarning={genericExportWarning}
@@ -3264,6 +3365,52 @@ function CreativeAssetsTab({
   );
 }
 
+function VersionHistoryPanel({
+  versions,
+  activeVersionId,
+  onRestore,
+}: {
+  versions: GenerationVersion[];
+  activeVersionId: string;
+  onRestore: (versionId: string) => void;
+}) {
+  if (!versions.length) return null;
+  return (
+    <div className="mb-5 rounded-xl border border-border bg-white p-4">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-secondary">Generation history</p>
+          <h3 className="mt-1 text-base font-semibold">{versions.length} saved version{versions.length === 1 ? "" : "s"}</h3>
+        </div>
+        <span className="text-xs text-secondary">Stored locally and synced to Supabase when configured</span>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-2">
+        {versions.slice(0, 4).map((version) => (
+          <button
+            key={version.id}
+            type="button"
+            onClick={() => onRestore(version.id)}
+            className={cx(
+              "focus-ring rounded-lg border p-3 text-left transition",
+              activeVersionId === version.id ? "border-primary bg-surface-muted" : "border-border bg-white hover:border-shade-40",
+            )}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium">{version.label}</span>
+              <span className="rounded-full bg-[#e3f1df] px-2 py-1 text-[11px] font-semibold text-[#108043]">{getSourceLabel(version.generationMeta)}</span>
+            </div>
+            <p className="mt-1 text-xs text-secondary">
+              {formatDate(version.createdAt)}
+              {version.generationMeta.model ? ` · ${version.generationMeta.model}` : ""}
+              {version.generationMeta.durationMs ? ` · ${formatDuration(version.generationMeta.durationMs)}` : ""}
+            </p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ExportTab({
   markdown,
   jsonValue,
@@ -3277,6 +3424,7 @@ function ExportTab({
   analysis,
   generationMeta,
   versions,
+  exportRecords,
   screenshotIncluded,
   flags,
   hasGenericWarning,
@@ -3295,6 +3443,7 @@ function ExportTab({
   analysis: Analysis | null;
   generationMeta?: GenerationMeta;
   versions: GenerationVersion[];
+  exportRecords: ExportRecord[];
   screenshotIncluded: boolean;
   flags: OutputFlags;
   hasGenericWarning: boolean;
@@ -3374,6 +3523,30 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
         ) : null}
         <CopyButton value={markdown} onCopied={onCopied} label="Copy tab" />
       </div>
+      {exportRecords.length ? (
+        <div className="rounded-xl border border-border bg-white p-4">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-secondary">Export history</p>
+              <h3 className="mt-1 text-base font-semibold">Recent downloads</h3>
+            </div>
+            <span className="text-xs text-secondary">{exportRecords.length} record{exportRecords.length === 1 ? "" : "s"} in this draft</span>
+          </div>
+          <div className="mt-4 divide-y divide-border">
+            {exportRecords.slice(0, 6).map((record) => (
+              <div key={record.id} className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-medium">{record.filename}</p>
+                  <p className="text-xs text-secondary">
+                    {record.exportType.toUpperCase()} · {formatFileSize(record.sizeBytes)} · {formatDate(record.createdAt)}
+                  </p>
+                </div>
+                <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">Synced on export</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2">
         {[
           ["Opportunity Score", "opportunity-score.json", opportunityPack, "application/json"],
