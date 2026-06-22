@@ -1,4 +1,4 @@
-export type ProjectStatus = "draft" | "generated" | "selected" | "exported";
+export type ProjectStatus = "draft" | "analyzed" | "generated" | "selected" | "prompt-ready" | "ready-for-design" | "archived" | "exported";
 
 export type Project = {
   id: string;

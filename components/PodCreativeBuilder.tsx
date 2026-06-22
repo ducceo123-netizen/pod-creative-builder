@@ -169,7 +169,7 @@ type CreativeDraft = {
   buyerPersona: string;
   occasion: string;
   niche?: string;
-  status: "draft" | "generated" | "selected" | "archived";
+  status: Project["status"];
   project: Project;
   analysis?: Analysis | null;
   concepts?: Concept[];
@@ -288,8 +288,11 @@ function getDraftTitle(project: Project) {
 }
 
 function getDraftStatus(project: Project, analysis: Analysis | null, concepts: Concept[]): CreativeDraft["status"] {
+  if (project.status === "archived" || project.status === "exported" || project.status === "ready-for-design") return project.status;
+  if (concepts.some((concept) => concept.selected) && project.status === "prompt-ready") return "prompt-ready";
   if (concepts.some((concept) => concept.selected)) return "selected";
   if (analysis || project.status === "generated") return "generated";
+  if (project.status === "analyzed") return "analyzed";
   return "draft";
 }
 
@@ -970,6 +973,7 @@ export default function PodCreativeBuilder() {
     const inferred = inferProjectContext(project, screenshot);
     const nextProject: Project = {
       ...project,
+      status: "analyzed",
       productType: inferred.normalizedProductType,
       buyerPersona: inferred.buyerPersona,
       occasion: inferred.occasion[0] || project.occasion,
@@ -1015,7 +1019,7 @@ export default function PodCreativeBuilder() {
     const normalized = normalizeProject(project);
     const nextProject: Project = {
       ...project,
-      status: "generated",
+      status: "prompt-ready",
       name: project.productTitle || project.name,
       updatedAt: new Date().toISOString(),
     };
@@ -1333,6 +1337,7 @@ export default function PodCreativeBuilder() {
     });
     setProject((current) => ({ ...current, status: "selected" }));
     setHasUnsavedChanges(true);
+    window.setTimeout(() => saveDraft(), 0);
   };
 
   const updateConceptExtra = (conceptId: string, value: { favorite?: boolean; notes?: string }) => {
@@ -1342,6 +1347,7 @@ export default function PodCreativeBuilder() {
     }));
     setProject((current) => ({ ...current, status: "selected" }));
     setHasUnsavedChanges(true);
+    window.setTimeout(() => saveDraft(), 0);
   };
 
   const restoreVersion = (versionId: string) => {
@@ -1374,6 +1380,7 @@ export default function PodCreativeBuilder() {
     link.click();
     URL.revokeObjectURL(href);
     setProject((current) => ({ ...current, status: "exported" }));
+    window.setTimeout(() => saveDraft(), 0);
   };
 
   const openSettings = async () => {
@@ -1673,6 +1680,7 @@ export default function PodCreativeBuilder() {
                       <ComponentPromptsTab
                         selectedConcepts={selectedConcepts}
                         componentPromptPacks={componentPromptPacks}
+                        analysis={analysis}
                         onCopied={showCopied}
                         onDownload={download}
                       />
@@ -1745,6 +1753,10 @@ function DashboardView({
 }) {
   const visibleDrafts = drafts.filter((draft) => draft.status !== "archived");
   const archivedDrafts = drafts.filter((draft) => draft.status === "archived");
+  const generatedDrafts = visibleDrafts.filter((draft) => draft.generationMeta);
+  const highOpportunityDrafts = visibleDrafts.filter((draft) => (draft.opportunityScore?.overall || 0) >= 7.5);
+  const promptReadyDrafts = visibleDrafts.filter((draft) => draft.status === "prompt-ready" || (draft.componentPromptPacks && Object.keys(draft.componentPromptPacks).length > 0));
+  const exportedDrafts = visibleDrafts.filter((draft) => draft.status === "exported");
 
   return (
     <section className="space-y-6">
@@ -1763,6 +1775,21 @@ function DashboardView({
           New Project
         </button>
         </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-5">
+        {[
+          ["Recent Drafts", visibleDrafts.length],
+          ["Recent Generations", generatedDrafts.length],
+          ["High Opportunity", highOpportunityDrafts.length],
+          ["Prompt Ready", promptReadyDrafts.length],
+          ["Exports", exportedDrafts.length],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-xl border border-border bg-white p-4">
+            <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">{label}</p>
+            <p className="mt-2 text-2xl font-semibold text-primary">{value}</p>
+          </div>
+        ))}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -1809,8 +1836,8 @@ function DashboardView({
             <h3 className="text-base font-semibold">Generation status</h3>
             <dl className="mt-4 space-y-3 text-sm">
               <Detail label="Recent drafts" value={`${visibleDrafts.length}`} />
-              <Detail label="Generated drafts" value={`${visibleDrafts.filter((draft) => draft.generationMeta).length}`} />
-              <Detail label="Export readiness" value={visibleDrafts.some((draft) => draft.status === "selected") ? "Ready" : "Draft"} />
+              <Detail label="Generated drafts" value={`${generatedDrafts.length}`} />
+              <Detail label="Export readiness" value={promptReadyDrafts.length ? "Ready" : "Draft"} />
               <Detail label="Draft storage" value={draftSyncStatus} />
             </dl>
           </div>
@@ -2877,14 +2904,49 @@ Prompt:
 ${prompt.prompt}`;
 }
 
+function formatChatGPTCreativeBrief(selectedConcepts: Concept[], componentPromptPacks: Record<string, ComponentPromptPack>, analysis: Analysis) {
+  return selectedConcepts
+    .map((concept) => {
+      const pack = componentPromptPacks[concept.id];
+      return `# ChatGPT Image Creative Brief
+
+Product concept: ${concept.name}
+Product type: ${analysis.productBreakdown.productType}
+Selected angle: ${concept.adHook}
+Buyer: ${concept.buyer}
+Occasion: ${concept.occasion}
+Core emotion: ${concept.emotion}
+Visual direction: ${concept.designDirection}
+Mockup direction: ${concept.mockupDirection}
+Custom fields: ${concept.customFields.join(", ")}
+
+No-copy rules:
+${analysis.inspirationRules.doNotCopy.map((rule) => `- ${rule}`).join("\n")}
+
+Output goal:
+Create production-ready image prompts or assets for this original POD concept. Keep the product original, ecommerce-ready, and clear at small mobile-ad size.
+
+Component prompt pack:
+${pack ? pack.prompts.map((prompt) => `## ${prompt.title}
+- Prompt type: ${prompt.promptType}
+- Target ratio: ${prompt.recommendedRatio}
+- Recommended use: ${prompt.recommendedUse}
+
+${prompt.prompt}`).join("\n\n") : "No component prompts available."}`;
+    })
+    .join("\n\n---\n\n");
+}
+
 function ComponentPromptsTab({
   selectedConcepts,
   componentPromptPacks,
+  analysis,
   onCopied,
   onDownload,
 }: {
   selectedConcepts: Concept[];
   componentPromptPacks: Record<string, ComponentPromptPack>;
+  analysis: Analysis;
   onCopied: () => void;
   onDownload: (name: string, value: string, type: string) => void;
 }) {
@@ -2892,6 +2954,7 @@ function ComponentPromptsTab({
 
   const markdownPack = formatComponentPromptMarkdown(selectedConcepts, componentPromptPacks);
   const jsonPack = JSON.stringify(selectedConcepts.map((concept) => componentPromptPacks[concept.id]).filter(Boolean), null, 2);
+  const chatGptBrief = formatChatGPTCreativeBrief(selectedConcepts, componentPromptPacks, analysis);
 
   return (
     <div className="space-y-6">
@@ -2902,6 +2965,7 @@ function ComponentPromptsTab({
         action={
           <>
             <CopyButton value={markdownPack || "No component prompts generated yet."} onCopied={onCopied} label="Copy pack" />
+            <CopyButton value={chatGptBrief} onCopied={onCopied} label="Copy Full Creative Brief for ChatGPT" />
             <button type="button" onClick={() => onDownload("component-prompts.md", markdownPack || "No component prompts generated yet.", "text/markdown")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
               <Download size={16} />
               Export Markdown
@@ -3164,6 +3228,7 @@ function ExportTab({
   const assetPromptPack = assetPlans.map((asset) => `## ${asset.title}\n- Type: ${asset.type}\n- Ratio: ${asset.ratio}\n\n${asset.prompt}`).join("\n\n");
   const componentPromptMarkdown = formatComponentPromptMarkdown(selectedConcepts, componentPromptPacks);
   const componentPromptJson = JSON.stringify(selectedConcepts.map((concept) => componentPromptPacks[concept.id]).filter(Boolean), null, 2);
+  const chatGptPromptPack = analysis ? formatChatGPTCreativeBrief(selectedConcepts, componentPromptPacks, analysis) : "";
   const opportunityPack = JSON.stringify(opportunityScore, null, 2);
   const anglePack = creativeAngleGroups
     .map((group) => `# ${group.group}\n\n${group.angles.map((angle) => `## ${angle.name}\n- Insight: ${angle.insight}\n- Hook: ${angle.hook}\n- Direction: ${angle.direction}`).join("\n\n")}`)
@@ -3240,6 +3305,7 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
           ["Ad Matrix", "ad-content-matrix.md", adMatrixPack || "No ad matrix generated yet.", "text/markdown"],
           ["Component Prompt Pack", "component-prompts.md", componentPromptMarkdown || "No component prompts generated yet.", "text/markdown"],
           ["Component Prompts JSON", "component-prompts.json", componentPromptJson, "application/json"],
+          ["ChatGPT Prompt Pack", "chatgpt-prompt-pack.md", chatGptPromptPack || "No ChatGPT prompt pack generated yet.", "text/markdown"],
           ["Creative Prompt Pack", "creative-prompt-pack.txt", assetPromptPack || "No asset prompts planned yet.", "text/plain"],
           ["Shopify Listing Draft", "shopify-listing-draft.md", shopifyPack || "No Shopify copy generated yet.", "text/markdown"],
           ["Meta Ads Pack", "meta-ads-pack.md", metaPack || "No Meta ads copy generated yet.", "text/markdown"],
