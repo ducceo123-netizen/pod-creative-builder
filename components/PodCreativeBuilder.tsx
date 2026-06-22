@@ -1692,6 +1692,8 @@ export default function PodCreativeBuilder() {
                     inferredContext={inferredContext}
                     generationMeta={generationMeta}
                     versions={versions}
+                    componentPromptCount={Object.values(componentPromptPacks).reduce((total, pack) => total + pack.prompts.length, 0)}
+                    onAnalyze={analyzeProduct}
                     onSaveDraft={saveDraft}
                     onExportMarkdown={() => download("pod-creative-pack.md", markdown, "text/markdown")}
                   />
@@ -2229,62 +2231,55 @@ function BriefForm({
       </FormSection>
 
       {inferredContext ? (
-      <FormSection title="2. Review Auto-Inferred Context" helper={`Confidence ${inferredContext.confidence}%. Edit only what looks off before generating.`}>
-        <div className="grid gap-3 md:grid-cols-3">
-          {[
-            ["Product type", inferredContext.normalizedProductType],
-            ["Buyer", inferredContext.buyerPersona],
-            ["Occasion", inferredContext.occasion.join(", ")],
-            ["Niche", inferredContext.niche],
-            ["Visual style", inferredContext.visualStyle],
-            ["Copy risk", inferredContext.copyRisk],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-xl border border-border bg-surface-muted p-4">
-              <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">{label}</p>
-              <p className="mt-2 text-sm font-semibold leading-6 text-primary">{value}</p>
+        <FormSection title="2. Quick review" helper="We suggested the basics from your competitor signal. Edit only what looks wrong. You can generate now and refine later.">
+          {inferredContext.confidence < 65 ? (
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-warning">
+              This suggestion may be off. Add product notes or edit the fields below before generating.
             </div>
-          ))}
-        </div>
-        <div className="rounded-xl border border-border bg-white p-4">
-          <p className="text-sm font-medium text-primary">Inferred from</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {inferredContext.inferredFrom.map((item) => (
-              <span key={item} className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary">{item}</span>
-            ))}
+          ) : null}
+          <div className="grid gap-3 md:grid-cols-4">
+            <CompactField label="Product type">
+              <SelectField value={project.productType || ""} options={["", ...PRODUCT_TYPES]} onChange={(value) => updateProject("productType", value)} />
+            </CompactField>
+            <CompactField label="Buyer">
+              <SelectField value={project.buyerPersona || ""} options={["", ...BUYER_PERSONAS]} onChange={(value) => updateProject("buyerPersona", value)} />
+            </CompactField>
+            <CompactField label="Occasion">
+              <SelectField value={project.occasion || ""} options={["", ...OCCASIONS]} onChange={(value) => updateProject("occasion", value)} />
+            </CompactField>
+            <CompactField label="Niche">
+              <TextInput value={project.niche || ""} onChange={(value) => updateProject("niche", value)} placeholder="Personalized pet gifts" />
+            </CompactField>
           </div>
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-2">
-            <FieldLabel>Product type</FieldLabel>
-            <SelectField value={project.productType || ""} options={["", ...PRODUCT_TYPES]} onChange={(value) => updateProject("productType", value)} />
+          {project.productType === "Other" ? (
+            <CompactField label="Specify product type">
+              <TextInput
+                value={project.customProductType || ""}
+                onChange={(value) => updateProject("customProductType", value)}
+                placeholder="Example: Squishy Acrylic Fridge Magnet"
+              />
+            </CompactField>
+          ) : null}
+          <details className="rounded-xl border border-border bg-surface-muted p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-primary">More inferred details</summary>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <Detail label="Visual style" value={inferredContext.visualStyle} />
+              <Detail label="Brand voice" value={inferredContext.brandVoice.join(", ")} />
+              <Detail label="Core emotion" value={inferredContext.coreEmotion} />
+              <Detail label="Visual mechanism" value={inferredContext.visualMechanism} />
+              <Detail label="Likely purchase reason" value={inferredContext.likelyPurchaseReason} />
+              <Detail label="Copy risk" value={inferredContext.copyRisk} />
+              <Detail label="Custom fields" value={inferredContext.customFields.join(", ")} />
+              <Detail label="Suggestion source" value={getInferenceSignalLabel(inferredContext)} />
+            </div>
+          </details>
+          <div className="flex flex-wrap justify-end gap-3">
+            <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+              <Sparkles size={17} className={isGenerating ? "animate-pulse" : ""} />
+              {isGenerating ? "Generating..." : "Generate Creative Pack"}
+            </button>
           </div>
-          <div className="space-y-2">
-            <FieldLabel>Buyer persona</FieldLabel>
-            <SelectField value={project.buyerPersona || ""} options={["", ...BUYER_PERSONAS]} onChange={(value) => updateProject("buyerPersona", value)} />
-          </div>
-          <div className="space-y-2">
-            <FieldLabel>Occasion</FieldLabel>
-            <SelectField value={project.occasion || ""} options={["", ...OCCASIONS]} onChange={(value) => updateProject("occasion", value)} />
-          </div>
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-2 md:col-span-2">
-            <FieldLabel>Niche</FieldLabel>
-            <TextInput value={project.niche || ""} onChange={(value) => updateProject("niche", value)} placeholder="Personalized pet gifts" />
-          </div>
-        </div>
-        {project.productType === "Other" ? (
-          <div className="space-y-2">
-            <FieldLabel>Specify product type</FieldLabel>
-            <TextInput
-              value={project.customProductType || ""}
-              onChange={(value) => updateProject("customProductType", value)}
-              placeholder="Example: Squishy Acrylic Fridge Magnet, Custom Photo Acrylic Plaque, Pet Memorial Suncatcher"
-            />
-            <p className="text-xs leading-5 text-secondary">Tell the tool what this product actually is. This helps avoid generic output like &quot;custom product.&quot;</p>
-          </div>
-        ) : null}
-      </FormSection>
+        </FormSection>
       ) : null}
 
       <details className="rounded-xl border border-border bg-white p-5 md:p-6">
@@ -2386,6 +2381,22 @@ function FormSection({ title, helper, children }: { title: string; helper: strin
   );
 }
 
+function CompactField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block rounded-xl border border-border bg-surface-muted p-3">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.06em] text-secondary">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function getInferenceSignalLabel(inferredContext: InferredProjectContext) {
+  const source = inferredContext.inferredFrom.join(", ");
+  if (inferredContext.confidence < 65) return "Low signal - add product notes for better results";
+  if (!inferredContext.inferredFrom.length || inferredContext.inferredFrom.includes("Fallback rules")) return "Suggested context may need review";
+  return `Suggested from ${source.toLowerCase()}`;
+}
+
 function BriefSummary({
   project,
   screenshot,
@@ -2398,6 +2409,8 @@ function BriefSummary({
   inferredContext,
   generationMeta,
   versions,
+  componentPromptCount,
+  onAnalyze,
   onSaveDraft,
   onExportMarkdown,
 }: {
@@ -2412,121 +2425,106 @@ function BriefSummary({
   inferredContext: InferredProjectContext | null;
   generationMeta?: GenerationMeta;
   versions: GenerationVersion[];
+  componentPromptCount: number;
+  onAnalyze: () => void;
   onSaveDraft: () => void;
   onExportMarkdown: () => void;
 }) {
-  const normalized = normalizeProject(project);
-  const summary = [
-    ["Product type", project.productType === "Other" ? normalized.normalizedProductType : project.productType],
-    ["Buyer", project.buyerPersona],
-    ["Occasion", project.occasion],
-    ["Niche", project.niche],
-    ["Visual style", project.visualStyle?.includes("Other") ? normalized.normalizedVisualDirection : project.visualStyle?.join(", ")],
-    ["Screenshot", screenshot ? screenshot.name : "Not uploaded"],
-  ];
-  const ready = readiness.score >= 80;
+  const hasCompetitorSignal = Boolean(project.competitorUrl || project.productTitle);
+  const hasNotes = Boolean(project.productDescription || project.userNotes);
+  const sourceLabel = inferredContext ? getInferenceSignalLabel(inferredContext) : "";
 
   return (
     <aside className="h-fit space-y-4 xl:sticky xl:top-24">
-      <div className={cx("rounded-xl border p-5", ready ? "border-black/10 bg-accent" : "border-border bg-white")}>
-        <div className="flex items-start justify-between gap-4">
+      <div className="rounded-xl border border-border bg-white p-5">
+        {!inferredContext ? (
           <div>
-            <h3 className="text-lg font-semibold">Creative readiness</h3>
-            <p className="mt-1 text-xs leading-5 text-shade-70">Preflight for the brief and generation quality.</p>
+            <h3 className="text-lg font-semibold">Brief status</h3>
+            <dl className="mt-4 grid gap-3 text-sm">
+              <Detail label="Competitor signal" value={hasCompetitorSignal ? "Added" : "Missing"} />
+              <Detail label="Notes" value={hasNotes ? "Added" : "Missing"} />
+              <Detail label="Screenshot" value={screenshot ? "Added" : "Optional"} />
+            </dl>
+            {readiness.missing.length ? (
+              <p className="mt-4 text-xs leading-5 text-secondary">Add one strong signal, then analyze. Extra details can wait.</p>
+            ) : null}
+            <button type="button" onClick={onAnalyze} className="focus-ring mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70">
+              <Search size={16} />
+              Analyze Product
+            </button>
           </div>
-          <span className={cx("rounded-full border px-3 py-1 text-xs font-medium", ready ? "border-black/10 bg-white/70 text-primary" : "border-border bg-surface-muted text-secondary")}>
-            {readiness.label}
-          </span>
-        </div>
-        <div className="mt-5">
-          <div className="flex items-end justify-between gap-4">
-            <p className="text-3xl font-semibold">{readiness.score}%</p>
-            <p className="text-sm text-secondary">
-              {readiness.completed}/{readiness.total} complete
-            </p>
-          </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-lg bg-white/80">
-            <div className={cx("h-full rounded-full", ready ? "bg-primary" : "bg-shade-70")} style={{ width: `${readiness.score}%` }} />
-          </div>
-        </div>
-        <div className="mt-4 grid gap-2">
-          {(inferredContext
-            ? [
-                ["Product type", inferredContext.normalizedProductType],
-                ["Buyer", inferredContext.buyerPersona],
-                ["Occasion", inferredContext.occasion.join(", ")],
-                ["Niche", inferredContext.niche],
-                ["Core emotion", inferredContext.coreEmotion],
-                ["Copy risk", inferredContext.copyRisk],
-              ]
-            : summary
-          ).map(([label, value]) => (
-            <div key={label} className="rounded-lg border border-black/10 bg-white/70 px-3 py-2">
-              <p className="text-xs font-medium text-secondary">{label}</p>
-              <p className="mt-1 text-sm font-medium text-primary">{value || "Not set"}</p>
+        ) : analysis ? (
+          <div>
+            <h3 className="text-lg font-semibold">Creative pack</h3>
+            <dl className="mt-4 grid gap-3 text-sm">
+              <Detail label="Generated with" value={getSourceLabel(generationMeta)} />
+              <Detail label="Concepts" value={`${selectedCount} selected`} />
+              <Detail label="Component prompts" value={`${componentPromptCount}`} />
+              <Detail label="Export" value="Ready" />
+            </dl>
+            <div className="mt-4 grid gap-2">
+              <button type="button" onClick={onExportMarkdown} className="focus-ring h-10 rounded-lg bg-primary px-3 text-sm font-medium text-white hover:bg-shade-70">
+                Export Pack
+              </button>
+              <button type="button" onClick={onSaveDraft} className="focus-ring h-9 rounded-lg border border-primary bg-white px-3 text-sm font-medium text-primary hover:bg-surface-muted">
+                Save Draft
+              </button>
             </div>
-          ))}
-        </div>
-        {readiness.missing.length ? (
-          <div className="mt-4 rounded-lg border border-border bg-white/70 p-4">
-            <p className="text-sm font-medium text-primary">Helpful next inputs</p>
-            <ul className="mt-2 space-y-1 text-sm leading-6 text-secondary">
-              {readiness.missing.slice(0, 3).map((item) => (
-                <li key={item}>- {item}</li>
-              ))}
-            </ul>
           </div>
-        ) : null}
-        {inferredContext ? (
-          <div className="mt-4 rounded-lg border border-border bg-white/70 px-3 py-2">
-            <p className="text-xs font-medium text-secondary">Confidence</p>
-            <p className="mt-1 text-sm font-semibold text-primary">{inferredContext.confidence}%</p>
-          </div>
-        ) : null}
-        <button type="button" onClick={onGenerate} disabled={isGenerating || !inferredContext} className="focus-ring mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
-          <RefreshCw size={16} className={isGenerating ? "animate-spin" : ""} />
-          {isGenerating ? "Generating..." : "Generate Creative Pack"}
-        </button>
-      </div>
-      <div className="rounded-xl border border-border bg-white p-5">
-        <div className="flex items-start justify-between gap-3">
+        ) : (
           <div>
-            <p className="text-sm font-medium text-secondary">Opportunity score</p>
-            <p className="mt-1 text-3xl font-semibold">{opportunityScore.overall}/10</p>
+            <h3 className="text-lg font-semibold">Ready to generate</h3>
+            <dl className="mt-4 grid gap-3 text-sm">
+              <Detail label="Product" value={project.productType || inferredContext.normalizedProductType} />
+              <Detail label="Context" value={`${project.buyerPersona || inferredContext.buyerPersona} / ${project.occasion || inferredContext.occasion[0]}`} />
+              <Detail label="Source" value={sourceLabel} />
+            </dl>
+            <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
+              <RefreshCw size={16} className={isGenerating ? "animate-spin" : ""} />
+              {isGenerating ? "Generating..." : "Generate Creative Pack"}
+            </button>
+            <button
+              type="button"
+              onClick={() => document.getElementById("product-brief")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              className="focus-ring mt-2 h-9 w-full rounded-lg border border-primary bg-white px-3 text-sm font-medium text-primary hover:bg-surface-muted"
+            >
+              Edit review
+            </button>
           </div>
-          <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", opportunityScore.overall >= 7.5 ? "bg-accent text-success" : "bg-amber-50 text-warning")}>
-            {opportunityScore.overall >= 7.5 ? "Strong" : "Review"}
-          </span>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-secondary">
-          <span className="rounded-lg bg-surface-muted px-3 py-2">Custom {opportunityScore.customDepth}/10</span>
-          <span className="rounded-lg bg-surface-muted px-3 py-2">Ads {opportunityScore.adCreativePotential}/10</span>
-          <span className="rounded-lg bg-surface-muted px-3 py-2">Gift {opportunityScore.giftability}/10</span>
-          <span className="rounded-lg bg-surface-muted px-3 py-2">Risk {opportunityScore.copycatRisk}/10</span>
-        </div>
+        )}
       </div>
-      <div className="rounded-xl border border-border bg-white p-5">
-        <p className="text-sm font-medium text-secondary">Generation status</p>
-        <dl className="mt-3 grid gap-2 text-sm">
-          <Detail label="Source" value={getSourceLabel(generationMeta)} />
-          <Detail label="Versions" value={`${versions.length}`} />
-          <Detail label="Selected concepts" value={`${selectedCount}`} />
-        </dl>
-        {analysis ? (
+      {analysis ? (
+        <div className="rounded-xl border border-border bg-white p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-secondary">Opportunity score</p>
+              <p className="mt-1 text-3xl font-semibold">{opportunityScore.overall}/10</p>
+            </div>
+            <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", opportunityScore.overall >= 7.5 ? "bg-accent text-success" : "bg-amber-50 text-warning")}>
+              {opportunityScore.overall >= 7.5 ? "Strong" : "Review"}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-secondary">
+            <span className="rounded-lg bg-surface-muted px-3 py-2">Custom {opportunityScore.customDepth}/10</span>
+            <span className="rounded-lg bg-surface-muted px-3 py-2">Ads {opportunityScore.adCreativePotential}/10</span>
+            <span className="rounded-lg bg-surface-muted px-3 py-2">Gift {opportunityScore.giftability}/10</span>
+            <span className="rounded-lg bg-surface-muted px-3 py-2">Risk {opportunityScore.copycatRisk}/10</span>
+          </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <ScoreBadge label="Custom" value={analysis.scores.customDepth} />
             <ScoreBadge label="Ads" value={analysis.scores.adsPotential} />
           </div>
-        ) : null}
-        <div className="mt-4 grid gap-2">
-          <button type="button" onClick={onSaveDraft} className="focus-ring h-9 rounded-lg border border-primary bg-white px-3 text-sm font-medium text-primary hover:bg-surface-muted">
-            Save Draft
-          </button>
-          <button type="button" onClick={onExportMarkdown} disabled={!analysis} className="focus-ring h-9 rounded-lg border border-primary bg-white px-3 text-sm font-medium text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50">
-            Export Markdown
-          </button>
         </div>
-      </div>
+        ) : null}
+      {versions.length ? (
+        <div className="rounded-xl border border-border bg-white p-5">
+          <p className="text-sm font-medium text-secondary">Workspace</p>
+          <dl className="mt-3 grid gap-2 text-sm">
+            <Detail label="Versions" value={`${versions.length}`} />
+            <Detail label="Last source" value={getSourceLabel(generationMeta)} />
+          </dl>
+        </div>
+      ) : null}
     </aside>
   );
 }
