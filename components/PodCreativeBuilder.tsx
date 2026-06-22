@@ -22,19 +22,21 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
+import { buildArtworkAssets, formatArtworkAssetsJson, formatArtworkAssetsMarkdown, formatArtworkToolBrief } from "@/lib/artworkAssets";
 import { exportMarkdown } from "@/lib/exportMarkdown";
 import { createProject, generateComponentPromptPack, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
 import { buildSearchText, cleanGenericOtherLanguage, getCustomFields, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
 import type { Analysis } from "@/types/analysis";
+import type { ArtworkAsset } from "@/types/artworkAsset";
 import type { ComponentPromptPack } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
-const tabs = ["Analysis", "Custom Map", "Opportunity", "Angles", "Ad Matrix", "Concepts", "Prompts", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
+const tabs = ["Analysis", "Custom Map", "Opportunity", "Angles", "Ad Matrix", "Concepts", "Prompts", "Artwork Assets", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
 const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
 const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
@@ -84,6 +86,7 @@ type GenerationVersion = {
   analysis: Analysis;
   concepts: Concept[];
   promptPacks: Record<string, PromptPack>;
+  artworkAssets: ArtworkAsset[];
   componentPromptPacks: Record<string, ComponentPromptPack>;
   copyPacks: Record<string, CopyPack>;
   generationMeta: GenerationMeta;
@@ -185,6 +188,7 @@ type CreativeDraft = {
   analysis?: Analysis | null;
   concepts?: Concept[];
   promptPacks?: Record<string, PromptPack>;
+  artworkAssets?: ArtworkAsset[];
   componentPromptPacks?: Record<string, ComponentPromptPack>;
   copyPacks?: Record<string, CopyPack>;
   screenshot?: ScreenshotState | null;
@@ -369,6 +373,7 @@ function buildDraft(args: {
   analysis: Analysis | null;
   concepts: Concept[];
   promptPacks: Record<string, PromptPack>;
+  artworkAssets: ArtworkAsset[];
   componentPromptPacks: Record<string, ComponentPromptPack>;
   copyPacks: Record<string, CopyPack>;
   screenshot: ScreenshotState | null;
@@ -396,6 +401,7 @@ function buildDraft(args: {
     analysis: args.analysis,
     concepts: args.concepts,
     promptPacks: args.promptPacks,
+    artworkAssets: args.artworkAssets,
     componentPromptPacks: args.componentPromptPacks,
     copyPacks: args.copyPacks,
     screenshot: args.screenshot,
@@ -873,6 +879,7 @@ export default function PodCreativeBuilder() {
   const [analysis, setAnalysis] = useState<Analysis | null>(() => getCurrentDraft()?.analysis || null);
   const [concepts, setConcepts] = useState<Concept[]>(() => getCurrentDraft()?.concepts || []);
   const [promptPacks, setPromptPacks] = useState<Record<string, PromptPack>>(() => getCurrentDraft()?.promptPacks || {});
+  const [artworkAssets, setArtworkAssets] = useState<ArtworkAsset[]>(() => getCurrentDraft()?.artworkAssets || []);
   const [componentPromptPacks, setComponentPromptPacks] = useState<Record<string, ComponentPromptPack>>(() => getCurrentDraft()?.componentPromptPacks || {});
   const [copyPacks, setCopyPacks] = useState<Record<string, CopyPack>>(() => getCurrentDraft()?.copyPacks || {});
   const [activeTab, setActiveTab] = useState("Analysis");
@@ -917,6 +924,7 @@ export default function PodCreativeBuilder() {
         if (tab === "Custom Map") return outputFlags.customMap;
         if (tab === "Concepts") return outputFlags.concepts;
         if (tab === "Prompts") return outputFlags.designPrompts || outputFlags.mockupPrompts;
+        if (tab === "Artwork Assets") return true;
         if (tab === "Component Prompts") return true;
         if (tab === "Creative Assets") return true;
         if (tab === "Shopify Copy") return outputFlags.shopifyCopy || outputFlags.seo;
@@ -943,9 +951,10 @@ export default function PodCreativeBuilder() {
 - Generated at: ${generationMeta?.generatedAt || "Not generated"}
 - Draft ID: ${currentDraftId || "Unsaved"}
 - Version ID: ${activeVersionId || versions[0]?.id || "No version"}
+- Artwork assets: ${artworkAssets.length}
 - Screenshot included: ${screenshot ? "Yes" : "No"}
 `;
-  }, [activeVersionId, analysis, componentPromptPacks, concepts, copyPacks, currentDraftId, generationMeta, outputFlags, project, promptPacks, screenshot, versions]);
+  }, [activeVersionId, analysis, artworkAssets.length, componentPromptPacks, concepts, copyPacks, currentDraftId, generationMeta, outputFlags, project, promptPacks, screenshot, versions]);
   const jsonExportValue = useMemo(() => {
     const normalized = normalizeProject(project);
     const filtered = filterExportData({ project, concepts, promptPacks, copyPacks });
@@ -962,6 +971,7 @@ export default function PodCreativeBuilder() {
         adMatrixRows,
         concepts: filtered.concepts,
         promptPacks: filtered.promptPacks,
+        artworkAssets,
         componentPromptPacks,
         copyPacks: filtered.copyPacks,
         assetPlans,
@@ -975,7 +985,7 @@ export default function PodCreativeBuilder() {
       null,
       2,
     ));
-  }, [adMatrixRows, analysis, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, exportRecords, generationMeta, opportunityScore, project, promptPacks, screenshot, versions]);
+  }, [adMatrixRows, analysis, artworkAssets, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, exportRecords, generationMeta, opportunityScore, project, promptPacks, screenshot, versions]);
   const genericExportWarning = useMemo(() => hasGenericOutputWarning(`${markdown}\n${jsonExportValue}`), [jsonExportValue, markdown]);
 
   useEffect(() => {
@@ -1039,6 +1049,7 @@ export default function PodCreativeBuilder() {
       analysis,
       concepts,
       promptPacks,
+      artworkAssets,
       componentPromptPacks,
       copyPacks,
       screenshot,
@@ -1075,6 +1086,7 @@ export default function PodCreativeBuilder() {
     };
     const draftId = currentDraftId || id("draft");
     const nextComponentPromptPacks = buildComponentPromptPacks(strategy.concepts.filter((concept) => concept.selected), normalized.normalizedProductType);
+    const nextArtworkAssets = buildArtworkAssets(strategy.concepts.filter((concept) => concept.selected), normalized.normalizedProductType, nextProject.id, draftId);
     const version: GenerationVersion = {
       id: id("version"),
       draftId,
@@ -1082,6 +1094,7 @@ export default function PodCreativeBuilder() {
       analysis: strategy.analysis,
       concepts: strategy.concepts,
       promptPacks: strategy.promptPacks,
+      artworkAssets: nextArtworkAssets,
       componentPromptPacks: nextComponentPromptPacks,
       copyPacks: strategy.copyPacks,
       generationMeta: meta,
@@ -1096,6 +1109,7 @@ export default function PodCreativeBuilder() {
       analysis: strategy.analysis,
       concepts: strategy.concepts,
       promptPacks: strategy.promptPacks,
+      artworkAssets: nextArtworkAssets,
       componentPromptPacks: nextComponentPromptPacks,
       copyPacks: strategy.copyPacks,
       screenshot,
@@ -1112,6 +1126,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(strategy.analysis);
     setConcepts(strategy.concepts);
     setPromptPacks(strategy.promptPacks);
+    setArtworkAssets(nextArtworkAssets);
     setComponentPromptPacks(nextComponentPromptPacks);
     setCopyPacks(strategy.copyPacks);
     setGenerationMeta(meta);
@@ -1204,6 +1219,7 @@ export default function PodCreativeBuilder() {
 
     setConcepts(nextConcepts);
     setPromptPacks(nextPrompts);
+    setArtworkAssets(buildArtworkAssets(nextConcepts.filter((concept) => concept.selected), normalized.normalizedProductType, project.id, currentDraftId || undefined));
     setComponentPromptPacks(nextComponentPrompts);
     setCopyPacks(nextCopies);
   };
@@ -1216,6 +1232,7 @@ export default function PodCreativeBuilder() {
       analysis,
       concepts,
       promptPacks,
+      artworkAssets,
       componentPromptPacks,
       copyPacks,
       screenshot,
@@ -1252,6 +1269,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(draft.analysis || null);
     setConcepts(draft.concepts || []);
     setPromptPacks(draft.promptPacks || {});
+    setArtworkAssets(draft.artworkAssets || buildArtworkAssets((draft.concepts || []).filter((concept) => concept.selected), normalized.normalizedProductType, draft.project.id, draft.id));
     setComponentPromptPacks(draft.componentPromptPacks || buildComponentPromptPacks((draft.concepts || []).filter((concept) => concept.selected), normalized.normalizedProductType));
     setCopyPacks(draft.copyPacks || {});
     setScreenshot(draft.screenshot || null);
@@ -1278,6 +1296,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(null);
     setConcepts([]);
     setPromptPacks({});
+    setArtworkAssets([]);
     setComponentPromptPacks({});
     setCopyPacks({});
     setScreenshot(null);
@@ -1353,6 +1372,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(null);
     setConcepts([]);
     setPromptPacks({});
+    setArtworkAssets([]);
     setComponentPromptPacks({});
     setCopyPacks({});
     setActiveTab("Analysis");
@@ -1390,7 +1410,11 @@ export default function PodCreativeBuilder() {
         }
         return { ...concept, selected };
       });
-      window.setTimeout(() => setAssetPlans(buildAssetPlans(nextConcepts.filter((concept) => concept.selected), promptPacks)), 0);
+      window.setTimeout(() => {
+        const selected = nextConcepts.filter((concept) => concept.selected);
+        setAssetPlans(buildAssetPlans(selected, promptPacks));
+        setArtworkAssets(buildArtworkAssets(selected, normalized.normalizedProductType, project.id, currentDraftId || undefined));
+      }, 0);
       return nextConcepts;
     });
     setProject((current) => ({ ...current, status: "selected" }));
@@ -1414,6 +1438,7 @@ export default function PodCreativeBuilder() {
     setAnalysis(version.analysis);
     setConcepts(version.concepts);
     setPromptPacks(version.promptPacks);
+    setArtworkAssets(version.artworkAssets || buildArtworkAssets(version.concepts.filter((concept) => concept.selected), normalizeProject(project).normalizedProductType, project.id, version.draftId));
     setComponentPromptPacks(version.componentPromptPacks || buildComponentPromptPacks(version.concepts.filter((concept) => concept.selected), normalizeProject(project).normalizedProductType));
     setCopyPacks(version.copyPacks);
     setGenerationMeta(version.generationMeta);
@@ -1461,6 +1486,7 @@ export default function PodCreativeBuilder() {
       analysis,
       concepts,
       promptPacks,
+      artworkAssets,
       componentPromptPacks,
       copyPacks,
       screenshot,
@@ -1782,6 +1808,15 @@ export default function PodCreativeBuilder() {
                     {displayedActiveTab === "Prompts" && (
                       <PromptsTab selectedConcepts={selectedConcepts} promptPacks={promptPacks} flags={outputFlags} onCopied={showCopied} />
                     )}
+                    {displayedActiveTab === "Artwork Assets" && (
+                      <ArtworkAssetsTab
+                        project={project}
+                        selectedConcepts={selectedConcepts}
+                        artworkAssets={artworkAssets}
+                        onCopied={showCopied}
+                        onDownload={download}
+                      />
+                    )}
                     {displayedActiveTab === "Component Prompts" && (
                       <ComponentPromptsTab
                         selectedConcepts={selectedConcepts}
@@ -1809,6 +1844,7 @@ export default function PodCreativeBuilder() {
                         markdown={markdown}
                         jsonValue={jsonExportValue}
                         assetPlans={assetPlans}
+                        artworkAssets={artworkAssets}
                         componentPromptPacks={componentPromptPacks}
                         copyPacks={copyPacks}
                         selectedConcepts={selectedConcepts}
@@ -3106,6 +3142,124 @@ ${prompt.prompt}`).join("\n\n") : "No component prompts available."}`;
     .join("\n\n---\n\n");
 }
 
+function ArtworkAssetsTab({
+  project,
+  selectedConcepts,
+  artworkAssets,
+  onCopied,
+  onDownload,
+}: {
+  project: Project;
+  selectedConcepts: Concept[];
+  artworkAssets: ArtworkAsset[];
+  onCopied: () => void;
+  onDownload: (name: string, value: string, type: string) => void;
+}) {
+  if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to generate artwork asset packs.</p>;
+  const markdown = formatArtworkAssetsMarkdown(artworkAssets);
+  const json = formatArtworkAssetsJson(artworkAssets);
+  const groups: ArtworkAsset["assetGroup"][] = ["Product Design Assets", "Material / Structure Assets", "Mockup Assets", "Ad Creative Assets"];
+  const mustHaveCount = artworkAssets.filter((asset) => asset.priority === "Must Have").length;
+
+  return (
+    <div className="space-y-6">
+      <TabIntro
+        eyebrow="Artwork Assets"
+        title="External design asset builder"
+        description="Use these product-specific asset prompts to create artwork, mockups, ads, and UGC frames in ChatGPT, Ideogram, Midjourney, Figma, or your design workflow."
+        action={
+          <>
+            <CopyButton value={markdown} onCopied={onCopied} label="Copy asset pack" />
+            <button type="button" onClick={() => onDownload("artwork-asset-pack.md", markdown, "text/markdown")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+              <Download size={16} />
+              Export Markdown
+            </button>
+            <button type="button" onClick={() => onDownload("artwork-asset-pack.json", json, "application/json")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+              <FileJson size={16} />
+              Export JSON
+            </button>
+          </>
+        }
+      />
+      <div className="grid gap-3 md:grid-cols-3">
+        <InfoCard title="Assets planned" value={`${artworkAssets.length}`} />
+        <InfoCard title="Must-have assets" value={`${mustHaveCount}`} />
+        <InfoCard title="Prompt ready" value={artworkAssets.length ? "Yes" : "No"} />
+      </div>
+      {selectedConcepts.map((concept) => {
+        const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
+        const conceptMarkdown = formatArtworkAssetsMarkdown(conceptAssets);
+        return (
+          <section key={concept.id} className="space-y-4 border-b border-border pb-6 last:border-b-0">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-xl font-semibold">{concept.name}</h3>
+                <p className="mt-1 text-sm leading-6 text-secondary">{concept.oneLineIdea}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <CopyButton value={conceptMarkdown} onCopied={onCopied} label="Copy concept assets" />
+                <button type="button" onClick={() => onDownload(`${concept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-assets.md`, conceptMarkdown, "text/markdown")} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Download size={14} />
+                  Export
+                </button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-surface-muted p-4">
+              <p className="text-sm font-semibold text-primary">Asset build order</p>
+              <ol className="mt-3 grid gap-2 md:grid-cols-2">
+                {conceptAssets
+                  .filter((asset) => asset.priority === "Must Have")
+                  .slice(0, 6)
+                  .map((asset, index) => (
+                    <li key={asset.id} className="flex gap-3 rounded-lg border border-border bg-white px-3 py-2 text-sm text-secondary">
+                      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-success">{index + 1}</span>
+                      <span>{asset.title}</span>
+                    </li>
+                  ))}
+              </ol>
+            </div>
+            {groups.map((group) => {
+              const assets = conceptAssets.filter((asset) => asset.assetGroup === group);
+              if (!assets.length) return null;
+              return (
+                <div key={group} className="space-y-3">
+                  <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">{group}</h4>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {assets.map((asset) => (
+                      <article key={asset.id} className="rounded-xl border border-border bg-white p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">{asset.assetType.replaceAll("_", " ")}</span>
+                          <span className="rounded-full bg-[#eaf4ff] px-3 py-1 text-xs font-semibold text-[#005bd3]">{asset.recommendedTool}</span>
+                          <span className="rounded-full bg-[#e3f1df] px-3 py-1 text-xs font-semibold text-[#108043]">{asset.priority}</span>
+                        </div>
+                        <h5 className="mt-3 font-semibold text-primary">{asset.title}</h5>
+                        <p className="mt-2 text-sm leading-6 text-secondary">{asset.purpose}</p>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-secondary">
+                          <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.recommendedRatio || "Flexible"}</span>
+                          <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.outputFormat || "Prompt only"}</span>
+                          <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.status}</span>
+                        </div>
+                        <p className="mt-3 max-h-36 overflow-auto rounded-lg bg-surface-muted p-3 font-mono text-xs leading-5 text-secondary">{asset.prompt}</p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <CopyButton value={asset.prompt} onCopied={onCopied} label="Copy Prompt" />
+                          <CopyButton value={formatArtworkToolBrief(project, asset)} onCopied={onCopied} label="Copy For ChatGPT" />
+                          <CopyButton value={`${asset.prompt}\n\n--ar ${(asset.recommendedRatio || "1:1").replace(":", ":")} --style raw`} onCopied={onCopied} label="Copy For Midjourney" />
+                          <CopyButton value={`${asset.prompt}\n\nTypography must be original, readable, and print-ready. Avoid copied slogans.`} onCopied={onCopied} label="Copy For Ideogram" />
+                          <CopyButton value={`Figma design brief\n\n${formatArtworkToolBrief(project, asset)}`} onCopied={onCopied} label="Copy Figma Brief" />
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function ComponentPromptsTab({
   selectedConcepts,
   componentPromptPacks,
@@ -3407,6 +3561,7 @@ function ExportTab({
   markdown,
   jsonValue,
   assetPlans,
+  artworkAssets,
   componentPromptPacks,
   copyPacks,
   selectedConcepts,
@@ -3426,6 +3581,7 @@ function ExportTab({
   markdown: string;
   jsonValue: string;
   assetPlans: CreativeAssetPlan[];
+  artworkAssets: ArtworkAsset[];
   componentPromptPacks: Record<string, ComponentPromptPack>;
   copyPacks: Record<string, CopyPack>;
   selectedConcepts: Concept[];
@@ -3443,6 +3599,8 @@ function ExportTab({
   onDownload: (name: string, value: string, type: string) => void;
 }) {
   const assetPromptPack = assetPlans.map((asset) => `## ${asset.title}\n- Type: ${asset.type}\n- Ratio: ${asset.ratio}\n\n${asset.prompt}`).join("\n\n");
+  const artworkAssetPack = formatArtworkAssetsMarkdown(artworkAssets);
+  const artworkAssetJson = formatArtworkAssetsJson(artworkAssets);
   const componentPromptMarkdown = formatComponentPromptMarkdown(selectedConcepts, componentPromptPacks);
   const componentPromptJson = JSON.stringify(selectedConcepts.map((concept) => componentPromptPacks[concept.id]).filter(Boolean), null, 2);
   const chatGptPromptPack = analysis ? formatChatGPTCreativeBrief(selectedConcepts, componentPromptPacks, analysis) : "";
@@ -3477,6 +3635,7 @@ function ExportTab({
 - Fallback used: ${generationMeta?.fallbackUsed ? "Yes" : "No"}
 - Generated at: ${generationMeta?.generatedAt || "Not generated"}
 - Versions saved: ${versions.length}
+- Artwork assets: ${artworkAssets.length}
 - Screenshot included: ${screenshotIncluded ? "Yes" : "No"}
 
 ## Custom Fields
@@ -3484,6 +3643,9 @@ ${analysis?.customFields.map((field) => `- ${field.name}: ${field.example}`).joi
 
 ## Assets
 ${assetPlans.map((asset) => `- ${asset.title} · ${asset.ratio} · ${asset.status}`).join("\n") || "No assets planned."}
+
+## Artwork Asset Builder
+${artworkAssets.map((asset) => `- ${asset.conceptName} · ${asset.assetGroup} · ${asset.title} · ${asset.priority}`).join("\n") || "No artwork assets planned."}
 
 ## Risks / Avoid
 ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || "- Review competitor risks before production."}`;
@@ -3544,6 +3706,8 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
           ["Opportunity Score", "opportunity-score.json", opportunityPack, "application/json"],
           ["Creative Angles", "creative-angles.md", anglePack || "No creative angles generated yet.", "text/markdown"],
           ["Ad Matrix", "ad-content-matrix.md", adMatrixPack || "No ad matrix generated yet.", "text/markdown"],
+          ["Artwork Asset Pack", "artwork-asset-pack.md", artworkAssetPack || "No artwork assets generated yet.", "text/markdown"],
+          ["Artwork Assets JSON", "artwork-assets.json", artworkAssetJson, "application/json"],
           ["Component Prompt Pack", "component-prompts.md", componentPromptMarkdown || "No component prompts generated yet.", "text/markdown"],
           ["Component Prompts JSON", "component-prompts.json", componentPromptJson, "application/json"],
           ["ChatGPT Prompt Pack", "chatgpt-prompt-pack.md", chatGptPromptPack || "No ChatGPT prompt pack generated yet.", "text/markdown"],
