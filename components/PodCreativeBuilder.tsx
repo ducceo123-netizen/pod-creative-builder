@@ -851,7 +851,7 @@ export default function PodCreativeBuilder() {
   const [conceptExtras, setConceptExtras] = useState<ConceptExtras>(() => getCurrentDraft()?.conceptExtras || {});
   const [assetPlans, setAssetPlans] = useState<CreativeAssetPlan[]>(() => getCurrentDraft()?.assetPlans || []);
   const [health, setHealth] = useState<{ groqConfigured: boolean; supabaseConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null>(null);
-  const [draftSyncStatus, setDraftSyncStatus] = useState("Local drafts");
+  const [draftSyncStatus, setDraftSyncStatus] = useState("Checking workspace sync");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [clearNeedsConfirm, setClearNeedsConfirm] = useState(false);
   const clearConfirmTimer = useRef<number | null>(null);
@@ -930,7 +930,11 @@ export default function PodCreativeBuilder() {
     let cancelled = false;
     void (async () => {
       const remoteDrafts = await fetchRemoteDrafts();
-      if (cancelled || !remoteDrafts) return;
+      if (cancelled) return;
+      if (!remoteDrafts) {
+        setDraftSyncStatus("Saved locally");
+        return;
+      }
       setDrafts(remoteDrafts);
       writeDrafts(remoteDrafts);
       setDraftSyncStatus("Supabase synced");
@@ -1536,15 +1540,15 @@ export default function PodCreativeBuilder() {
                     <p className="mb-2 text-xs font-medium uppercase tracking-[0.06em] text-secondary">Creative Generator</p>
                     <h1 className="page-title">Creative Generator</h1>
                     <p className="mt-2 max-w-[720px] text-sm leading-6 text-secondary">
-                      Turn competitor POD products into original Shopify-ready product concepts.
+                      Paste a competitor signal, analyze the product context, then generate a complete creative pack.
                     </p>
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={saveDraft} className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
                       Save Draft
                     </button>
-                    <button type="button" onClick={generateStrategy} disabled={isGenerating} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70 disabled:opacity-70">
-                      {isGenerating ? "Generating with Groq..." : "Generate Strategy"}
+                    <button type="button" onClick={inferredContext ? generateStrategy : analyzeProduct} disabled={isGenerating} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70 disabled:opacity-70">
+                      {isGenerating ? "Generating..." : inferredContext ? "Generate Creative Pack" : "Analyze Product"}
                     </button>
                   </div>
                 </section>
@@ -1748,15 +1752,15 @@ function DashboardView({
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Dashboard</p>
           <h1 className="mt-2 text-[28px] font-semibold">Dashboard</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Create POD product strategy packs from competitor references.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Analyze competitor signals, infer product context, and save creative packs to your workspace.</p>
           <span className="mt-3 inline-flex rounded-full border border-border bg-white px-3 py-1 text-xs font-semibold text-secondary">{draftSyncStatus}</span>
         </div>
         <div className="flex gap-2">
         <button type="button" onClick={onCreate} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">
-          Create new draft
+          Analyze product
         </button>
-        <button type="button" className="focus-ring inline-flex h-9 items-center justify-center rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
-          Import Brief
+        <button type="button" onClick={onCreate} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
+          New Project
         </button>
         </div>
       </div>
@@ -1765,23 +1769,23 @@ function DashboardView({
         <div className="rounded-xl border border-border bg-white p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Create a POD creative pack</h2>
+              <h2 className="text-lg font-semibold">Fast product intake workflow</h2>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">
-                Add a competitor product, define the buyer and occasion, then generate concepts, prompts, Shopify copy, and Meta ad hooks.
+                Paste a competitor URL, screenshot, title, or notes. The app infers the product context before generating concepts, prompts, Shopify copy, and Meta ad hooks.
               </p>
             </div>
           </div>
           <div className="mt-5 flex flex-wrap gap-2">
-            {["Brief", "Strategy", "Creative Pack", "Export"].map((item) => (
+            {["Signal", "Inference", "Creative Pack", "Export"].map((item) => (
               <span key={item} className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm font-semibold text-secondary">{item}</span>
             ))}
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-4">
             {[
-              "Add competitor product",
-              "Define product type and buyer",
-              "Generate strategy with Groq",
-              "Review and export creative pack",
+              "Paste competitor signal",
+              "Review inferred context",
+              "Generate creative pack",
+              "Copy prompts and export",
             ].map((item, index) => (
               <div key={item} className="rounded-xl border border-border bg-surface-muted p-4">
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-accent text-xs font-semibold text-success">{index + 1}</span>
@@ -1795,10 +1799,10 @@ function DashboardView({
           <div className="rounded-xl border border-border bg-white p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
             <h3 className="text-base font-semibold">Quick actions</h3>
             <div className="mt-4 grid gap-2">
-              <button type="button" onClick={onCreate} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">New Project</button>
-              <button type="button" className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Save Draft</button>
-              <button type="button" className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Export Markdown</button>
-              <button type="button" className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Export JSON</button>
+              <button type="button" onClick={onCreate} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">Analyze Product</button>
+              <button type="button" onClick={onCreate} className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">New Draft</button>
+              <button type="button" disabled className="h-9 cursor-not-allowed rounded-lg border border-border bg-surface-muted px-4 text-sm font-semibold text-secondary">Save after analysis</button>
+              <button type="button" disabled className="h-9 cursor-not-allowed rounded-lg border border-border bg-surface-muted px-4 text-sm font-semibold text-secondary">Export after generation</button>
             </div>
           </div>
           <div className="rounded-xl border border-border bg-white p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
@@ -1815,15 +1819,15 @@ function DashboardView({
 
       <div>
         <h2 className="text-lg font-semibold">Recent drafts</h2>
-        <p className="mt-1 text-sm text-secondary">Open, duplicate, archive, or delete drafts. Supabase is used when configured, with local drafts as fallback.</p>
+        <p className="mt-1 text-sm text-secondary">Open, duplicate, archive, or delete drafts. Drafts are saved to your workspace when Supabase is connected.</p>
       </div>
 
       {!visibleDrafts.length ? (
         <div className="rounded-xl border border-dashed border-border bg-white p-10 text-center">
           <h3 className="text-2xl font-medium">No saved drafts yet.</h3>
-          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">Create a product brief, generate a pack, then save it here for comparison and later edits.</p>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">Start with one competitor signal. After analysis, the draft will save to your workspace and reappear here.</p>
           <button type="button" onClick={onCreate} className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
-            Create new draft
+            Analyze first product
           </button>
         </div>
       ) : (
