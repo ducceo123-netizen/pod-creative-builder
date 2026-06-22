@@ -1751,12 +1751,37 @@ function DashboardView({
   onArchive: (draftId: string) => void;
   onDelete: (draftId: string) => void;
 }) {
+  const [draftSearch, setDraftSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [productFilter, setProductFilter] = useState("");
+  const [occasionFilter, setOccasionFilter] = useState("");
   const visibleDrafts = drafts.filter((draft) => draft.status !== "archived");
   const archivedDrafts = drafts.filter((draft) => draft.status === "archived");
   const generatedDrafts = visibleDrafts.filter((draft) => draft.generationMeta);
   const highOpportunityDrafts = visibleDrafts.filter((draft) => (draft.opportunityScore?.overall || 0) >= 7.5);
   const promptReadyDrafts = visibleDrafts.filter((draft) => draft.status === "prompt-ready" || (draft.componentPromptPacks && Object.keys(draft.componentPromptPacks).length > 0));
   const exportedDrafts = visibleDrafts.filter((draft) => draft.status === "exported");
+  const statusOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.status))).sort();
+  const productOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.productType).filter(Boolean))).sort();
+  const occasionOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.occasion).filter(Boolean))).sort();
+  const filteredDrafts = visibleDrafts.filter((draft) => {
+    const haystack = [draft.title, draft.competitorBrand, draft.productType, draft.occasion, draft.buyerPersona].filter(Boolean).join(" ").toLowerCase();
+    return (
+      (!draftSearch || haystack.includes(draftSearch.toLowerCase())) &&
+      (!statusFilter || draft.status === statusFilter) &&
+      (!productFilter || draft.productType === productFilter) &&
+      (!occasionFilter || draft.occasion === occasionFilter)
+    );
+  });
+  const exportDraft = (draft: CreativeDraft) => {
+    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = `${draft.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "pod-draft"}.json`;
+    link.click();
+    URL.revokeObjectURL(href);
+  };
 
   return (
     <section className="space-y-6">
@@ -1858,50 +1883,101 @@ function DashboardView({
           </button>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {visibleDrafts.map((draft) => (
-            <article key={draft.id} className="rounded-xl border border-border bg-white p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-xl font-medium">{draft.title}</h3>
-                  <p className="mt-1 text-sm text-secondary">{draft.competitorBrand || "No competitor brand"}</p>
+        <div className="space-y-3">
+          <div className="grid gap-3 rounded-xl border border-border bg-white p-4 lg:grid-cols-[minmax(220px,1fr)_180px_180px_180px]">
+            <label className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary" />
+              <input
+                value={draftSearch}
+                onChange={(event) => setDraftSearch(event.target.value)}
+                placeholder="Search drafts..."
+                className="focus-ring h-10 w-full rounded-lg border border-border bg-white pl-9 pr-3 text-sm text-primary placeholder:text-muted"
+              />
+            </label>
+            <select value={productFilter} onChange={(event) => setProductFilter(event.target.value)} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+              <option value="">All products</option>
+              {productOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select value={occasionFilter} onChange={(event) => setOccasionFilter(event.target.value)} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+              <option value="">All occasions</option>
+              {occasionOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+              <option value="">All statuses</option>
+              {statusOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </div>
+
+          <div className="hidden overflow-x-auto rounded-xl border border-border lg:block">
+            <table className="w-full min-w-[1100px] border-collapse bg-white text-left text-sm">
+              <thead className="bg-surface-muted text-xs uppercase tracking-[0.06em] text-secondary">
+                <tr>
+                  {["Product Title", "Competitor", "Product Type", "Occasion", "Status", "Opportunity", "Updated", "Source", "Actions"].map((head) => (
+                    <th key={head} className="px-4 py-3 font-medium">{head}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredDrafts.map((draft) => (
+                  <tr key={draft.id} className="border-t border-border align-top">
+                    <td className="max-w-[280px] px-4 py-3 font-semibold text-primary">{draft.title}</td>
+                    <td className="px-4 py-3 text-secondary">{draft.competitorBrand || "Not set"}</td>
+                    <td className="px-4 py-3 text-secondary">{draft.productType || "Not set"}</td>
+                    <td className="px-4 py-3 text-secondary">{draft.occasion || "Not set"}</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full border border-black/10 bg-accent px-3 py-1 text-xs font-medium capitalize">{draft.status}</span>
+                    </td>
+                    <td className="px-4 py-3 text-secondary">{draft.opportunityScore ? `${draft.opportunityScore.overall}/10` : "Not scored"}</td>
+                    <td className="px-4 py-3 text-secondary">{formatDate(draft.updatedAt)}</td>
+                    <td className="px-4 py-3 text-secondary" title={getSourceHelp(draft.generationMeta)}>{getSourceLabel(draft.generationMeta)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => onOpen(draft)} className="focus-ring h-8 rounded-lg bg-primary px-3 text-xs font-medium text-white hover:bg-shade-70">Open</button>
+                        <button type="button" onClick={() => onDuplicate(draft)} className="focus-ring h-8 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">Duplicate</button>
+                        <button type="button" onClick={() => exportDraft(draft)} className="focus-ring h-8 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">Export</button>
+                        <button type="button" onClick={() => onArchive(draft.id)} className="focus-ring h-8 rounded-lg border border-border bg-white px-3 text-xs font-medium text-secondary hover:bg-surface-muted">Archive</button>
+                        <button type="button" onClick={() => onDelete(draft.id)} className="focus-ring h-8 rounded-lg border border-border bg-white px-3 text-xs font-medium text-danger hover:bg-red-50">Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid gap-4 lg:hidden">
+            {filteredDrafts.map((draft) => (
+              <article key={draft.id} className="rounded-xl border border-border bg-white p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-xl font-medium">{draft.title}</h3>
+                    <p className="mt-1 text-sm text-secondary">{draft.competitorBrand || "No competitor brand"}</p>
+                  </div>
+                  <span className="rounded-full border border-black/10 bg-accent px-3 py-1 text-xs font-medium capitalize">{draft.status}</span>
                 </div>
-                <span className="rounded-full border border-black/10 bg-accent px-3 py-1 text-xs font-medium capitalize">{draft.status}</span>
-              </div>
-              <dl className="mt-4 grid gap-2 text-sm text-secondary">
-                <Detail label="Product" value={draft.productType || "Not set"} />
-                <Detail label="Buyer" value={draft.buyerPersona || "Not set"} />
-                <Detail label="Occasion" value={draft.occasion || "Not set"} />
-                <Detail label="Updated" value={formatDate(draft.updatedAt)} />
-              </dl>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <span
-                  title={getSourceHelp(draft.generationMeta)}
-                  className="rounded-lg border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary"
-                >
-                  Generated by {getSourceLabel(draft.generationMeta)}
-                </span>
-                {draft.versions?.length ? <span className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{draft.versions.length} versions</span> : null}
-              </div>
-              {draft.generationMeta?.fallbackUsed ? (
-                <p className="mt-2 text-xs leading-5 text-secondary">This draft was generated with the local template. Regenerate after Groq is connected to create an AI version.</p>
-              ) : null}
-              <div className="mt-5 flex flex-wrap gap-2">
-                <button type="button" onClick={() => onOpen(draft)} className="focus-ring inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70">
-                  Open
-                </button>
-                <button type="button" onClick={() => onDuplicate(draft)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
-                  Duplicate
-                </button>
-                <button type="button" onClick={() => onArchive(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-border bg-white px-4 text-sm font-medium text-secondary hover:bg-surface-muted">
-                  Archive
-                </button>
-                <button type="button" onClick={() => onDelete(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-border bg-white px-4 text-sm font-medium text-danger hover:bg-red-50">
-                  Delete
-                </button>
-              </div>
-            </article>
-          ))}
+                <dl className="mt-4 grid gap-2 text-sm text-secondary">
+                  <Detail label="Product" value={draft.productType || "Not set"} />
+                  <Detail label="Occasion" value={draft.occasion || "Not set"} />
+                  <Detail label="Opportunity" value={draft.opportunityScore ? `${draft.opportunityScore.overall}/10` : "Not scored"} />
+                  <Detail label="Source" value={getSourceLabel(draft.generationMeta)} />
+                  <Detail label="Updated" value={formatDate(draft.updatedAt)} />
+                </dl>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => onOpen(draft)} className="focus-ring inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-shade-70">Open</button>
+                  <button type="button" onClick={() => onDuplicate(draft)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">Duplicate</button>
+                  <button type="button" onClick={() => exportDraft(draft)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">Export</button>
+                  <button type="button" onClick={() => onArchive(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-border bg-white px-4 text-sm font-medium text-secondary hover:bg-surface-muted">Archive</button>
+                  <button type="button" onClick={() => onDelete(draft.id)} className="focus-ring inline-flex h-10 items-center rounded-lg border border-border bg-white px-4 text-sm font-medium text-danger hover:bg-red-50">Delete</button>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          {!filteredDrafts.length ? (
+            <div className="rounded-xl border border-dashed border-border bg-white p-8 text-center text-sm text-secondary">
+              No drafts match these filters.
+            </div>
+          ) : null}
         </div>
       )}
 
