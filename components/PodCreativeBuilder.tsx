@@ -1124,8 +1124,10 @@ export default function PodCreativeBuilder() {
     setAssetPlans(nextAssetPlans);
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
-    void saveRemoteDraft(nextDraft);
-    void saveRemoteGeneration(version);
+    void (async () => {
+      await saveRemoteDraft(nextDraft);
+      await saveRemoteGeneration(version);
+    })();
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
     if (screenshot) localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
     setHasUnsavedChanges(false);
@@ -1478,8 +1480,10 @@ export default function PodCreativeBuilder() {
     writeDrafts(nextDrafts);
     localStorage.setItem(CURRENT_DRAFT_ID_KEY, draftId);
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
-    void saveRemoteExport(record);
-    void saveRemoteDraft(nextDraft);
+    void (async () => {
+      await saveRemoteDraft(nextDraft);
+      await saveRemoteExport(record);
+    })();
   };
 
   const openSettings = async () => {
