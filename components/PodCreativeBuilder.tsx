@@ -234,6 +234,29 @@ function createDefaultProject() {
   });
 }
 
+function createDemoProject() {
+  return createProject({
+    name: "Demo Teeinblue workflow",
+    competitorBrand: "Wander Prints",
+    productTitle: "Custom Photo Poke Dad Bod Belly - Personalized Squishy Acrylic Fridge Magnet",
+    productDescription:
+      "A funny personalized squishy acrylic fridge magnet. Customers upload a photo of dad, husband, boyfriend, or grandpa and the product turns him into a playful dad-bod character with a soft pokeable belly.",
+    competitorUrl: "https://example.com/custom-photo-poke-dad-bod-belly-magnet",
+    productType: "Squishy Acrylic Fridge Magnet",
+    customProductType: "",
+    buyerPersona: "Dad",
+    occasion: "Father's Day",
+    niche: "Funny personalized dad gift, husband gift, Father's Day gift, family humor gift",
+    priceRange: "$19-$29",
+    brandVoice: ["Fun", "Gift-focused", "US-market natural"],
+    visualStyle: ["Funny Custom Character"],
+    customVisualStyle: "",
+    avoidList: "No copied competitor artwork, slogans, product layout, logos, or brand styling.",
+    userNotes: "Demo workflow seed for testing Artwork Assets and Teeinblue Package tabs.",
+    outputs: OUTPUT_REQUESTS,
+  });
+}
+
 function id(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -420,6 +443,12 @@ function getExportType(filename: string, contentType: string) {
   if (contentType.includes("markdown") || filename.endsWith(".md")) return "markdown";
   if (contentType.includes("text") || filename.endsWith(".txt")) return "text";
   return filename.split(".").pop() || "file";
+}
+
+function getArtworkWorkflowStatus(asset: ArtworkAsset) {
+  if (asset.status === "Not Started") return "Missing";
+  if (asset.status === "Copied" || asset.status === "Generated Externally") return "Prompt Copied";
+  return asset.status;
 }
 
 function loadPreviewImage(src: string) {
@@ -1142,15 +1171,12 @@ export default function PodCreativeBuilder() {
 
   const analyzeProduct = () => {
     const hasSignal = Boolean(project.competitorUrl || project.productTitle || project.productDescription || screenshot);
-    if (!hasSignal) {
-      setToast("Add a URL, screenshot, title, or notes first");
-      window.setTimeout(() => setToast(""), 1600);
-      return;
-    }
+    const sourceProject = hasSignal ? project : createDemoProject();
+    const sourceScreenshot = hasSignal ? screenshot : null;
 
-    const inferred = inferProjectContext(project, screenshot);
+    const inferred = inferProjectContext(sourceProject, sourceScreenshot);
     const nextProject: Project = {
-      ...project,
+      ...sourceProject,
       status: "analyzed",
       productType: inferred.normalizedProductType,
       buyerPersona: inferred.buyerPersona,
@@ -1171,7 +1197,7 @@ export default function PodCreativeBuilder() {
       artworkAssets,
       componentPromptPacks,
       copyPacks,
-      screenshot,
+      screenshot: sourceScreenshot,
       conceptExtras,
       assetPlans,
       generationMeta,
@@ -1183,24 +1209,27 @@ export default function PodCreativeBuilder() {
     const nextDrafts = existing ? drafts.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...drafts];
 
     setProject(nextProject);
+    setScreenshot(sourceScreenshot);
     setInferredContext(inferred);
     setDrafts(nextDrafts);
     setCurrentDraftId(draft.id);
+    setActiveView("Product Brief");
     writeDrafts(nextDrafts);
     localStorage.setItem(CURRENT_DRAFT_ID_KEY, draft.id);
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
+    if (!sourceScreenshot) localStorage.removeItem(SCREENSHOT_DRAFT_KEY);
     void saveRemoteDraft(draft);
     setHasUnsavedChanges(false);
-    setToast("Product analyzed");
+    setToast(hasSignal ? "Product analyzed" : "Demo product analyzed");
     window.setTimeout(() => setToast(""), 1400);
   };
 
-  const applyStrategy = (strategy: GenerateStrategyResponse, meta: GenerationMeta) => {
-    const normalized = normalizeProject(project);
+  const applyStrategy = (strategy: GenerateStrategyResponse, meta: GenerationMeta, sourceProject = project, sourceInferredContext = inferredContext) => {
+    const normalized = normalizeProject(sourceProject);
     const nextProject: Project = {
-      ...project,
+      ...sourceProject,
       status: "prompt-ready",
-      name: project.productTitle || project.name,
+      name: sourceProject.productTitle || sourceProject.name,
       updatedAt: new Date().toISOString(),
     };
     const draftId = currentDraftId || id("draft");
@@ -1237,7 +1266,7 @@ export default function PodCreativeBuilder() {
       generationMeta: meta,
       versions: nextVersions,
       exportRecords,
-      inferredContext,
+      inferredContext: sourceInferredContext,
       createdAt: existing?.createdAt,
     });
     const nextDrafts = existing ? drafts.map((draft) => (draft.id === draftId ? nextDraft : draft)) : [nextDraft, ...drafts];
@@ -1251,6 +1280,7 @@ export default function PodCreativeBuilder() {
     setGenerationMeta(meta);
     setStrategySource(getSourceLabel(meta));
     setProject(nextProject);
+    setInferredContext(sourceInferredContext);
     setCurrentDraftId(draftId);
     localStorage.setItem(CURRENT_DRAFT_ID_KEY, draftId);
     setVersions(nextVersions);
@@ -1266,7 +1296,8 @@ export default function PodCreativeBuilder() {
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
     if (screenshot) localStorage.setItem(SCREENSHOT_DRAFT_KEY, JSON.stringify(screenshot));
     setHasUnsavedChanges(false);
-    setActiveTab(visibleTabs[0] || "Analysis");
+    setActiveView("Product Brief");
+    setActiveTab("Artwork Assets");
     setToast("Creative pack generated");
     window.setTimeout(() => setToast(""), 1600);
     window.setTimeout(() => outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -1318,6 +1349,40 @@ export default function PodCreativeBuilder() {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const startDemoWorkflow = () => {
+    const demoProject = createDemoProject();
+    const inferred = inferProjectContext(demoProject, null);
+    const analyzedProject: Project = {
+      ...demoProject,
+      status: "analyzed",
+      productType: inferred.normalizedProductType,
+      buyerPersona: inferred.buyerPersona,
+      occasion: inferred.occasion[0] || demoProject.occasion,
+      niche: inferred.niche,
+      brandVoice: inferred.brandVoice,
+      visualStyle: [inferred.visualStyle],
+      outputs: inferred.recommendedOutputs,
+      updatedAt: new Date().toISOString(),
+    };
+    const strategy = buildLocalStrategy(analyzedProject);
+    setScreenshot(null);
+    localStorage.removeItem(SCREENSHOT_DRAFT_KEY);
+    setGenerationError("Demo data is loaded so the full workflow is visible without a live API call.");
+    applyStrategy(
+      strategy,
+      {
+        usedAI: false,
+        generationSource: "local-template",
+        fallbackUsed: true,
+        fallbackReason: "Demo workflow data loaded for testing.",
+        durationMs: 0,
+        generatedAt: new Date().toISOString(),
+      },
+      analyzedProject,
+      inferred,
+    );
   };
 
   const regenerateConcepts = () => {
@@ -1603,6 +1668,7 @@ export default function PodCreativeBuilder() {
     setInferredContext(null);
     setStrategySource("");
     setActiveView("Product Brief");
+    setActiveTab("Analysis");
     setHasUnsavedChanges(true);
   };
 
@@ -1905,21 +1971,8 @@ export default function PodCreativeBuilder() {
   };
 
   const useSampleBrief = () => {
-    setProject((current) => ({
-      ...current,
-      productTitle: "Custom Photo Poke Dad Bod Belly - Personalized Squishy Acrylic Fridge Magnet",
-      competitorBrand: "Wander Prints",
-      productDescription:
-        "A funny personalized squishy acrylic fridge magnet. Customers upload a photo of dad, husband, boyfriend, or grandpa and the product turns him into a playful dad-bod character with a soft pokeable belly.",
-      productType: "Squishy Acrylic Fridge Magnet",
-      buyerPersona: "Dad",
-      occasion: "Father's Day",
-      niche: "Funny personalized dad gift, husband gift, Father's Day gift, family humor gift",
-      visualStyle: ["Funny Custom Character"],
-      brandVoice: ["Fun", "Gift-focused", "US-market natural"],
-      outputs: OUTPUT_REQUESTS,
-      updatedAt: new Date().toISOString(),
-    }));
+    setProject(createDemoProject());
+    setActiveView("Product Brief");
     setHasUnsavedChanges(true);
     setToast("Sample brief loaded");
     window.setTimeout(() => setToast(""), 1400);
@@ -2015,6 +2068,7 @@ export default function PodCreativeBuilder() {
                 drafts={drafts}
                 draftSyncStatus={draftSyncStatus}
                 onCreate={createNewDraft}
+                onDemo={startDemoWorkflow}
                 onOpen={loadDraft}
                 onDuplicate={duplicateDraft}
                 onArchive={archiveDraft}
@@ -2115,7 +2169,7 @@ export default function PodCreativeBuilder() {
                 {isGenerating ? (
                   <LoadingState />
                 ) : !analysis ? (
-                  <EmptyState onGenerate={generateStrategy} onUseSample={useSampleBrief} isGenerating={isGenerating} />
+                  <EmptyState onGenerate={generateStrategy} onUseSample={useSampleBrief} onDemo={startDemoWorkflow} isGenerating={isGenerating} />
                 ) : (
                   <>
                     <div className="mb-5 rounded-xl border border-border bg-surface-muted p-4">
@@ -2246,6 +2300,7 @@ function DashboardView({
   drafts,
   draftSyncStatus,
   onCreate,
+  onDemo,
   onOpen,
   onDuplicate,
   onArchive,
@@ -2254,6 +2309,7 @@ function DashboardView({
   drafts: CreativeDraft[];
   draftSyncStatus: string;
   onCreate: () => void;
+  onDemo: () => void;
   onOpen: (draft: CreativeDraft) => void;
   onDuplicate: (draft: CreativeDraft) => void;
   onArchive: (draftId: string) => void;
@@ -2307,16 +2363,30 @@ function DashboardView({
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Dashboard</p>
           <h1 className="mt-2 text-[28px] font-semibold">Dashboard</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Analyze competitor signals, infer product context, and save creative packs to your workspace.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Analyze competitor URLs, screenshots, titles, or notes, then move into Artwork Assets and a Teeinblue-ready package.</p>
           <span className="mt-3 inline-flex rounded-full border border-border bg-white px-3 py-1 text-xs font-semibold text-secondary">{draftSyncStatus}</span>
         </div>
         <div className="flex gap-2">
-        <button type="button" onClick={onCreate} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">
-          Analyze product
-        </button>
-        <button type="button" onClick={onCreate} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
-          New Project
-        </button>
+          <button type="button" onClick={onCreate} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">
+            Analyze Product
+          </button>
+          <button type="button" onClick={onDemo} className="focus-ring inline-flex h-9 items-center justify-center rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
+            Try Demo Workflow
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#cce0ff] bg-[#eaf4ff] p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.06em] text-[#005bd3]">New workflow</p>
+            <h2 className="mt-2 text-xl font-semibold text-primary">Competitor intake to Teeinblue package</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-secondary">Open the intake form, review inferred product context, generate the creative pack, upload external assets, then export a Teeinblue package.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={onCreate} className="focus-ring inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">Open Intake</button>
+            <button type="button" onClick={onDemo} className="focus-ring inline-flex h-10 items-center rounded-lg border border-primary bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Load Demo Pack</button>
+          </div>
         </div>
       </div>
 
@@ -2341,8 +2411,8 @@ function DashboardView({
         <div className="rounded-xl border border-border bg-white p-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
           <h3 className="text-base font-semibold">Quick actions</h3>
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <button type="button" onClick={onCreate} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">Analyze Product</button>
-            <button type="button" onClick={onCreate} className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">New Draft</button>
+            <button type="button" onClick={onCreate} className="focus-ring h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">Open Intake</button>
+            <button type="button" onClick={onDemo} className="focus-ring h-9 rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">Demo Workflow</button>
             <button type="button" disabled className="h-9 cursor-not-allowed rounded-lg border border-border bg-surface-muted px-4 text-sm font-semibold text-secondary">Save after analysis</button>
             <button type="button" disabled className="h-9 cursor-not-allowed rounded-lg border border-border bg-surface-muted px-4 text-sm font-semibold text-secondary">Export after generation</button>
           </div>
@@ -2370,9 +2440,14 @@ function DashboardView({
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-secondary">
             Paste a competitor product URL or upload a screenshot. The tool will infer product type, buyer, custom fields, ad angles, and prompt packs.
           </p>
-          <button type="button" onClick={onCreate} className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
-            Analyze Product
-          </button>
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            <button type="button" onClick={onCreate} className="focus-ring inline-flex h-11 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white hover:bg-shade-70">
+              Analyze Product
+            </button>
+            <button type="button" onClick={onDemo} className="focus-ring inline-flex h-11 items-center rounded-lg border border-primary bg-white px-5 text-sm font-medium text-primary hover:bg-surface-muted">
+              Try Demo Workflow
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -2946,17 +3021,17 @@ function BriefSummary({
   );
 }
 
-function EmptyState({ onGenerate, onUseSample, isGenerating }: { onGenerate: () => void; onUseSample: () => void; isGenerating: boolean }) {
+function EmptyState({ onGenerate, onUseSample, onDemo, isGenerating }: { onGenerate: () => void; onUseSample: () => void; onDemo: () => void; isGenerating: boolean }) {
   return (
     <div className="rounded-xl border border-dashed border-border bg-surface-muted px-5 py-12 text-center md:px-8">
       <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Creative Pack</p>
       <Sparkles className="mx-auto mt-4 text-primary" size={30} />
       <h3 className="mt-4 text-2xl font-medium">Your creative pack will appear here</h3>
       <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-secondary">
-        Add a competitor product and generate a strategy pack to review concepts, prompts, Shopify copy, and ads.
+        Add a competitor product and generate a strategy pack to review concepts, artwork assets, Teeinblue package exports, Shopify copy, and ads.
       </p>
       <div className="mx-auto mt-6 grid max-w-3xl gap-3 md:grid-cols-3">
-        {["Custom fields map", "Design + mockup prompts", "Shopify + Meta copy"].map((item) => (
+        {["Competitor intake", "Artwork asset slots", "Teeinblue package"].map((item) => (
           <div key={item} className="rounded-xl border border-border bg-white px-4 py-4 text-sm font-medium text-primary">
             {item}
           </div>
@@ -2964,7 +3039,10 @@ function EmptyState({ onGenerate, onUseSample, isGenerating }: { onGenerate: () 
       </div>
       <div className="mt-5 flex flex-wrap justify-center gap-2">
         <button type="button" onClick={onUseSample} className="focus-ring inline-flex h-9 items-center rounded-lg border border-shade-30 bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
-          Use sample dad magnet brief
+          Use sample intake
+        </button>
+        <button type="button" onClick={onDemo} className="focus-ring inline-flex h-9 items-center rounded-lg border border-primary bg-white px-4 text-sm font-semibold text-primary hover:bg-surface-muted">
+          Load demo workflow
         </button>
         <button type="button" onClick={onGenerate} disabled={isGenerating} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70 disabled:cursor-not-allowed disabled:opacity-70">
           <Sparkles size={16} className={isGenerating ? "animate-pulse" : ""} />
@@ -3615,15 +3693,15 @@ function ArtworkAssetsTab({
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">{asset.assetType.replaceAll("_", " ")}</span>
                           <span className="rounded-full bg-[#eaf4ff] px-3 py-1 text-xs font-semibold text-[#005bd3]">{asset.recommendedTool}</span>
-                          <span className="rounded-full bg-[#e3f1df] px-3 py-1 text-xs font-semibold text-[#108043]">{asset.priority}</span>
-                          {asset.priority === "Must Have" && asset.status === "Not Started" ? <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-warning">Missing</span> : null}
+                          <span className="rounded-full bg-[#e3f1df] px-3 py-1 text-xs font-semibold text-[#108043]">{asset.priority === "Must Have" ? "Required" : "Optional"}</span>
+                          <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", getArtworkWorkflowStatus(asset) === "Missing" ? "bg-amber-50 text-warning" : "bg-[#e3f1df] text-[#108043]")}>{getArtworkWorkflowStatus(asset)}</span>
                         </div>
                         <h5 className="mt-3 font-semibold text-primary">{asset.title}</h5>
                         <p className="mt-2 text-sm leading-6 text-secondary">{asset.purpose}</p>
                         <div className="mt-3 flex flex-wrap gap-2 text-xs text-secondary">
                           <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.recommendedRatio || "Flexible"}</span>
                           <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.outputFormat || "Prompt only"}</span>
-                          <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.status}</span>
+                          <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{getArtworkWorkflowStatus(asset)}</span>
                         </div>
                         {asset.uploadedAssetUrl ? (
                           <div className="mt-3 rounded-lg border border-border bg-surface-muted p-3">
@@ -3694,17 +3772,23 @@ function ArtworkAssetsTab({
                               }}
                             />
                           </label>
-                          {(["Copied", "Generated Externally", "Approved", "Needs Revision"] as const).map((status) => (
+                          {[
+                            ["Missing", "Not Started"],
+                            ["Prompt Copied", "Copied"],
+                            ["Uploaded", "Uploaded"],
+                            ["Approved", "Approved"],
+                            ["Needs Revision", "Needs Revision"],
+                          ].map(([label, status]) => (
                             <button
                               key={status}
                               type="button"
-                              onClick={() => onStatusChange(asset.id, status)}
+                              onClick={() => onStatusChange(asset.id, status as ArtworkAsset["status"])}
                               className={cx(
                                 "focus-ring h-8 rounded-lg border px-3 text-xs font-medium",
-                                asset.status === status ? "border-primary bg-primary text-white" : "border-border bg-white text-secondary hover:bg-surface-muted",
+                                getArtworkWorkflowStatus(asset) === label ? "border-primary bg-primary text-white" : "border-border bg-white text-secondary hover:bg-surface-muted",
                               )}
                             >
-                              {status}
+                              {label}
                             </button>
                           ))}
                         </div>
@@ -3826,7 +3910,14 @@ function TeeinbluePackageTab({
                   </div>
                 </div>
                 <div className="rounded-xl border border-border bg-white p-4">
-                  <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">Setup guide preview</h4>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">teeinblue_manifest.json preview</h4>
+                    <CopyButton value={manifestJson} onCopied={() => undefined} label="Copy JSON" />
+                  </div>
+                  <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-surface-muted p-3 text-xs leading-5 text-secondary whitespace-pre-wrap">{manifestJson}</pre>
+                </div>
+                <div className="rounded-xl border border-border bg-white p-4">
+                  <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">setup_guide.md preview</h4>
                   <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-surface-muted p-3 text-xs leading-5 text-secondary whitespace-pre-wrap">{setupGuide}</pre>
                 </div>
               </div>
