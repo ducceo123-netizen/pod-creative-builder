@@ -221,7 +221,7 @@ export function buildTeeinbluePackageSync(draftId: string, project: Project, con
           filename: asset.uploadedAssetName || `${fileSafe(asset.title)}.png`,
           contentType: asset.uploadedAssetType,
           url: asset.uploadedAssetUrl || "",
-          localPreview: asset.uploadedAssetUrl?.startsWith("data:") ?? true,
+          localPreview: asset.uploadedAssetSource !== "supabase-storage",
         };
       }),
     createdAt: now,

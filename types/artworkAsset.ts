@@ -37,6 +37,8 @@ export type ArtworkAsset = {
   uploadedAssetUrl?: string;
   uploadedAssetName?: string;
   uploadedAssetType?: string;
+  uploadedAssetSource?: "local" | "supabase-storage";
+  uploadedAssetStoragePath?: string;
   status: "Not Started" | "Copied" | "Generated Externally" | "Uploaded" | "Approved" | "Needs Revision";
   createdAt: string;
   updatedAt: string;

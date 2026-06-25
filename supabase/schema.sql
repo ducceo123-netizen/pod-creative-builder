@@ -2,6 +2,20 @@
 -- Paste this whole file into Supabase SQL Editor and run it once.
 -- The app writes through server API routes using SUPABASE_SERVICE_ROLE_KEY.
 
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'pod-artwork-assets',
+  'pod-artwork-assets',
+  true,
+  10485760,
+  array['image/png', 'image/jpeg', 'image/svg+xml']
+)
+on conflict (id) do update
+set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
 create table if not exists public.creative_drafts (
   id text primary key,
   title text not null default 'Untitled POD Draft',

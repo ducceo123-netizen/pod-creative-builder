@@ -326,6 +326,31 @@ async function saveRemoteDesignPackages(draftId: string, packages: TeeinbluePack
   }
 }
 
+async function uploadRemoteArtworkAsset(payload: {
+  draftId: string;
+  assetId: string;
+  filename: string;
+  contentType: string;
+  dataUrl: string;
+}) {
+  try {
+    const response = await fetch("/api/upload-asset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as {
+      source?: string;
+      storageUrl?: string;
+      path?: string;
+    };
+    return data.source === "supabase-storage" && data.storageUrl ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 async function patchRemoteDraft(draft: CreativeDraft) {
   try {
     await fetch(`/api/drafts/${encodeURIComponent(draft.id)}`, {
@@ -395,6 +420,69 @@ function getExportType(filename: string, contentType: string) {
   if (contentType.includes("markdown") || filename.endsWith(".md")) return "markdown";
   if (contentType.includes("text") || filename.endsWith(".txt")) return "text";
   return filename.split(".").pop() || "file";
+}
+
+function loadPreviewImage(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
+  });
+}
+
+async function renderTeeinbluePreviewPng(layout: DesignLayoutPlan, assets: ArtworkAsset[]) {
+  const previewMax = 1400;
+  const scale = previewMax / Math.max(layout.canvas.width, layout.canvas.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(layout.canvas.width * scale);
+  canvas.height = Math.round(layout.canvas.height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "#108043";
+  context.setLineDash([12, 8]);
+  context.lineWidth = 2;
+  const safeInset = layout.printArea.safeMargin * scale;
+  context.strokeRect(safeInset, safeInset, canvas.width - safeInset * 2, canvas.height - safeInset * 2);
+  context.setLineDash([]);
+
+  for (const layer of layout.layers) {
+    const asset = assets.find((item) => `layer-${item.id}` === layer.id);
+    const x = layer.x * scale;
+    const y = layer.y * scale;
+    const width = layer.width * scale;
+    const height = layer.height * scale;
+
+    if (asset?.uploadedAssetUrl?.startsWith("data:")) {
+      try {
+        const image = await loadPreviewImage(asset.uploadedAssetUrl);
+        context.drawImage(image, x, y, width, height);
+      } catch {
+        context.fillStyle = "#eaf4ff";
+        context.fillRect(x, y, width, height);
+      }
+    } else {
+      context.fillStyle = layer.teeinblueRole === "guide_do_not_print" ? "rgba(255, 244, 206, 0.72)" : "rgba(234, 244, 255, 0.82)";
+      context.fillRect(x, y, width, height);
+    }
+
+    context.strokeStyle = layer.teeinblueRole === "guide_do_not_print" ? "#d89b00" : "#005bd3";
+    context.lineWidth = 2;
+    context.strokeRect(x, y, width, height);
+    context.fillStyle = layer.teeinblueRole === "guide_do_not_print" ? "#8a6116" : "#005bd3";
+    context.font = "600 20px Arial, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(layer.name, x + width / 2, y + height / 2, Math.max(80, width - 16));
+  }
+
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) return null;
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 function buildDraft(args: {
@@ -1308,22 +1396,33 @@ export default function PodCreativeBuilder() {
     }
 
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const now = new Date().toISOString();
+      const localDataUrl = String(reader.result);
+      const remoteUpload = await uploadRemoteArtworkAsset({
+        draftId: currentDraftId || project.id,
+        assetId,
+        filename: file.name,
+        contentType: file.type,
+        dataUrl: localDataUrl,
+      });
+      const uploadedAssetUrl = remoteUpload?.storageUrl || localDataUrl;
       const nextArtworkAssets = artworkAssets.map((asset) =>
         asset.id === assetId
           ? {
               ...asset,
-              uploadedAssetUrl: String(reader.result),
+              uploadedAssetUrl,
               uploadedAssetName: file.name,
               uploadedAssetType: file.type,
+              uploadedAssetSource: remoteUpload ? ("supabase-storage" as const) : ("local" as const),
+              uploadedAssetStoragePath: remoteUpload?.path,
               status: "Uploaded" as const,
               updatedAt: now,
             }
           : asset,
       );
       persistArtworkAssets(nextArtworkAssets);
-      setToast("Asset uploaded locally");
+      setToast(remoteUpload ? "Asset uploaded to Supabase Storage" : "Asset uploaded locally");
       window.setTimeout(() => setToast(""), 1400);
     };
     reader.readAsDataURL(file);
@@ -1379,7 +1478,7 @@ export default function PodCreativeBuilder() {
     window.setTimeout(() => setToast(""), 1800);
   };
 
-  const exportTeeinblueZip = (concept: Concept) => {
+  const exportTeeinblueZip = async (concept: Concept) => {
     const draftId = currentDraftId || id("draft");
     const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
     const packageSync = buildTeeinbluePackageSync(draftId, project, concept, conceptAssets);
@@ -1389,7 +1488,6 @@ export default function PodCreativeBuilder() {
       { path: "design-package/teeinblue_manifest.json", data: JSON.stringify(packageSync.manifest, null, 2) },
       { path: "design-package/layout_plan.json", data: JSON.stringify(packageSync.layoutPlan, null, 2) },
       { path: "design-package/asset_slots.json", data: JSON.stringify(packageSync.assetSlots, null, 2) },
-      { path: "exports/final_preview_note.txt", data: "Preview PNG compositing is not generated in this MVP. Use the layout_plan.json and uploaded assets to assemble the final preview in Teeinblue/Figma." },
     ];
 
     conceptAssets.forEach((asset) => {
@@ -1401,6 +1499,13 @@ export default function PodCreativeBuilder() {
         data: dataUrlToBytes(asset.uploadedAssetUrl),
       });
     });
+
+    const previewPng = await renderTeeinbluePreviewPng(packageSync.layoutPlan, conceptAssets);
+    if (previewPng) {
+      files.push({ path: "exports/final_preview.png", data: previewPng });
+    } else {
+      files.push({ path: "exports/final_preview_note.txt", data: "Preview PNG could not be rendered in this browser session. Use the layout_plan.json and uploaded assets to assemble the final preview in Teeinblue/Figma." });
+    }
 
     const zip = createZipBlob(files);
     downloadBlob(`${filePrefix}-teeinblue-package.zip`, zip, {
@@ -3527,7 +3632,7 @@ function ArtworkAssetsTab({
                               <img src={asset.uploadedAssetUrl} alt={`${asset.title} uploaded preview`} className="h-16 w-16 rounded-md border border-border bg-white object-cover" />
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-medium text-primary">{asset.uploadedAssetName || "Uploaded asset"}</p>
-                                <p className="text-xs text-secondary">Local preview. Supabase Storage can be added later.</p>
+                                <p className="text-xs text-secondary">{asset.uploadedAssetSource === "supabase-storage" ? "Stored in Supabase Storage." : "Local preview. Run the latest SQL to enable Supabase Storage."}</p>
                               </div>
                             </div>
                           </div>
