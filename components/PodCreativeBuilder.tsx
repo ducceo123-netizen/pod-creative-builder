@@ -15,7 +15,6 @@ import {
   Search,
   Settings,
   Sparkles,
-  Star,
   Upload,
   X,
 } from "lucide-react";
@@ -24,9 +23,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
 import { buildArtworkAssets, formatArtworkAssetsJson, formatArtworkAssetsMarkdown, formatArtworkToolBrief } from "@/lib/artworkAssets";
 import { exportMarkdown } from "@/lib/exportMarkdown";
-import { createProject, generateComponentPromptPack, generateConcepts, generateCopyPack, generatePromptPack } from "@/lib/generate";
+import { createProject, generateComponentPromptPack } from "@/lib/generate";
 import { buildSearchText, cleanGenericOtherLanguage, getCustomFields, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
+import { buildProductDecomposition, formatProductDecompositionMarkdown } from "@/lib/productDecomposition";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
 import { buildAssetSlots, buildDesignLayoutPlan, buildTeeinblueManifest, buildTeeinbluePackageSync, formatTeeinblueSetupGuide } from "@/lib/teeinbluePackage";
 import { createZipBlob, dataUrlToBytes, type ZipFileInput } from "@/lib/zipPackage";
@@ -36,10 +36,11 @@ import type { ComponentPromptPack } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
 import type { DesignLayoutPlan, TeeinbluePackageSync } from "@/types/designPackage";
+import type { ComponentAssetPlan, DesignComponent, ProductDecomposition } from "@/types/productDecomposition";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
-const tabs = ["Analysis", "Custom Map", "Opportunity", "Angles", "Ad Matrix", "Concepts", "Prompts", "Artwork Assets", "Teeinblue Package", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
+const tabs = ["Snapshot", "Decomposition", "Personalization Map", "Asset Plan", "Component Prompts", "Material Notes", "Ad Matrix", "Copy", "Artwork Assets", "Teeinblue Package", "Export"];
 const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
 const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
@@ -1067,30 +1068,33 @@ export default function PodCreativeBuilder() {
   const visibleTabs = useMemo(
     () =>
       tabs.filter((tab) => {
-        if (tab === "Analysis") return outputFlags.productBreakdown;
-        if (tab === "Custom Map") return outputFlags.customMap;
-        if (tab === "Concepts") return outputFlags.concepts;
-        if (tab === "Prompts") return outputFlags.designPrompts || outputFlags.mockupPrompts;
+        if (tab === "Snapshot") return true;
+        if (tab === "Decomposition") return true;
+        if (tab === "Personalization Map") return true;
+        if (tab === "Asset Plan") return true;
+        if (tab === "Material Notes") return true;
+        if (tab === "Copy") return outputFlags.shopifyCopy || outputFlags.seo || outputFlags.metaAds;
         if (tab === "Artwork Assets") return true;
         if (tab === "Teeinblue Package") return true;
         if (tab === "Component Prompts") return true;
-        if (tab === "Creative Assets") return true;
-        if (tab === "Shopify Copy") return outputFlags.shopifyCopy || outputFlags.seo;
-        if (tab === "Meta Ads") return outputFlags.metaAds;
         if (tab === "Export") return outputFlags.exportMarkdown || outputFlags.exportJson;
         return true;
       }),
     [outputFlags],
   );
-  const displayedActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] || "Analysis";
+  const displayedActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] || "Snapshot";
   const readiness = useMemo(() => getReadiness(project, screenshot), [project, screenshot]);
   const opportunityScore = useMemo(() => getOpportunityScore(project, analysis), [analysis, project]);
+  const productDecomposition = useMemo(() => buildProductDecomposition(project, analysis, artworkAssets), [analysis, artworkAssets, project]);
   const creativeAngleGroups = useMemo(() => buildCreativeAngleGroups(project, analysis), [analysis, project]);
   const adMatrixRows = useMemo(() => buildAdMatrixRows(project, analysis, concepts, copyPacks), [analysis, concepts, copyPacks, project]);
   const hasGeneratedPack = Boolean(analysis);
   const markdown = useMemo(() => {
     const base = exportMarkdown({ project, analysis, concepts, prompts: promptPacks, componentPrompts: componentPromptPacks, copies: copyPacks, flags: outputFlags });
-    return `${base}
+    const decompositionMarkdown = formatProductDecompositionMarkdown(productDecomposition);
+    return `${decompositionMarkdown}
+
+${base}
 ## Generation Metadata
 
 - Strategy source: ${getSourceLabel(generationMeta)}
@@ -1102,7 +1106,7 @@ export default function PodCreativeBuilder() {
 - Artwork assets: ${artworkAssets.length}
 - Screenshot included: ${screenshot ? "Yes" : "No"}
 `;
-  }, [activeVersionId, analysis, artworkAssets.length, componentPromptPacks, concepts, copyPacks, currentDraftId, generationMeta, outputFlags, project, promptPacks, screenshot, versions]);
+  }, [activeVersionId, analysis, artworkAssets.length, componentPromptPacks, concepts, copyPacks, currentDraftId, generationMeta, outputFlags, productDecomposition, project, promptPacks, screenshot, versions]);
   const jsonExportValue = useMemo(() => {
     const normalized = normalizeProject(project);
     const filtered = filterExportData({ project, concepts, promptPacks, copyPacks });
@@ -1114,6 +1118,12 @@ export default function PodCreativeBuilder() {
           visualStyle: [normalized.normalizedVisualDirection],
         },
         analysis,
+        designComponents: productDecomposition.designComponents,
+        personalizationMap: productDecomposition.personalizationMap,
+        componentAssetPlan: productDecomposition.componentAssetPlan,
+        componentPrompts: componentPromptPacks,
+        materialNotes: productDecomposition.materialNotes,
+        safeTransformationPlan: productDecomposition.safeTransformationPlan,
         opportunityScore,
         creativeAngleGroups,
         adMatrixRows,
@@ -1133,7 +1143,7 @@ export default function PodCreativeBuilder() {
       null,
       2,
     ));
-  }, [adMatrixRows, analysis, artworkAssets, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, exportRecords, generationMeta, opportunityScore, project, promptPacks, screenshot, versions]);
+  }, [adMatrixRows, analysis, artworkAssets, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, exportRecords, generationMeta, opportunityScore, productDecomposition, project, promptPacks, screenshot, versions]);
   const genericExportWarning = useMemo(() => hasGenericOutputWarning(`${markdown}\n${jsonExportValue}`), [jsonExportValue, markdown]);
 
   useEffect(() => {
@@ -1385,30 +1395,6 @@ export default function PodCreativeBuilder() {
     );
   };
 
-  const regenerateConcepts = () => {
-    if (!analysis) return;
-
-    const normalized = normalizeProject(project);
-    const nextConcepts = generateConcepts(project, analysis);
-    const nextPrompts: Record<string, PromptPack> = {};
-    const nextComponentPrompts: Record<string, ComponentPromptPack> = {};
-    const nextCopies: Record<string, CopyPack> = {};
-
-    nextConcepts
-      .filter((concept) => concept.selected)
-      .forEach((concept) => {
-        nextPrompts[concept.id] = generatePromptPack(concept, normalized.normalizedProductType);
-        nextComponentPrompts[concept.id] = generateComponentPromptPack(concept, normalized.normalizedProductType);
-        nextCopies[concept.id] = generateCopyPack(concept, normalized.normalizedProductType);
-      });
-
-    setConcepts(nextConcepts);
-    setPromptPacks(nextPrompts);
-    setArtworkAssets(buildArtworkAssets(nextConcepts.filter((concept) => concept.selected), normalized.normalizedProductType, project.id, currentDraftId || undefined));
-    setComponentPromptPacks(nextComponentPrompts);
-    setCopyPacks(nextCopies);
-  };
-
   const persistArtworkAssets = (nextArtworkAssets: ArtworkAsset[]) => {
     setArtworkAssets(nextArtworkAssets);
     const existing = currentDraftId ? drafts.find((draft) => draft.id === currentDraftId) : null;
@@ -1641,7 +1627,7 @@ export default function PodCreativeBuilder() {
     setInferredContext(draft.inferredContext || null);
     setStrategySource(getSourceLabel(draft.generationMeta));
     setActiveView("Product Brief");
-    setActiveTab("Analysis");
+    setActiveTab("Snapshot");
     setHasUnsavedChanges(false);
     setToast("Draft opened");
     window.setTimeout(() => setToast(""), 1400);
@@ -1668,7 +1654,7 @@ export default function PodCreativeBuilder() {
     setInferredContext(null);
     setStrategySource("");
     setActiveView("Product Brief");
-    setActiveTab("Analysis");
+    setActiveTab("Snapshot");
     setHasUnsavedChanges(true);
   };
 
@@ -1736,7 +1722,7 @@ export default function PodCreativeBuilder() {
     setArtworkAssets([]);
     setComponentPromptPacks({});
     setCopyPacks({});
-    setActiveTab("Analysis");
+    setActiveTab("Snapshot");
     setStrategySource("");
     setGenerationError("");
     setScreenshot(null);
@@ -1750,47 +1736,6 @@ export default function PodCreativeBuilder() {
     setClearNeedsConfirm(false);
     setToast("Draft cleared");
     window.setTimeout(() => setToast(""), 1400);
-  };
-
-  const toggleConcept = (conceptId: string) => {
-    const normalized = normalizeProject(project);
-    setConcepts((current) => {
-      const nextConcepts = current.map((concept) => {
-        if (concept.id !== conceptId) return concept;
-        const selected = !concept.selected;
-        if (selected) {
-          setPromptPacks((packs) => ({ ...packs, [concept.id]: generatePromptPack(concept, normalized.normalizedProductType) }));
-          setComponentPromptPacks((packs) => ({ ...packs, [concept.id]: generateComponentPromptPack(concept, normalized.normalizedProductType) }));
-          setCopyPacks((packs) => ({ ...packs, [concept.id]: generateCopyPack(concept, normalized.normalizedProductType) }));
-        } else {
-          setComponentPromptPacks((packs) => {
-            const next = { ...packs };
-            delete next[concept.id];
-            return next;
-          });
-        }
-        return { ...concept, selected };
-      });
-      window.setTimeout(() => {
-        const selected = nextConcepts.filter((concept) => concept.selected);
-        setAssetPlans(buildAssetPlans(selected, promptPacks));
-        setArtworkAssets(buildArtworkAssets(selected, normalized.normalizedProductType, project.id, currentDraftId || undefined));
-      }, 0);
-      return nextConcepts;
-    });
-    setProject((current) => ({ ...current, status: "selected" }));
-    setHasUnsavedChanges(true);
-    window.setTimeout(() => saveDraft(), 0);
-  };
-
-  const updateConceptExtra = (conceptId: string, value: { favorite?: boolean; notes?: string }) => {
-    setConceptExtras((current) => ({
-      ...current,
-      [conceptId]: { ...current[conceptId], ...value },
-    }));
-    setProject((current) => ({ ...current, status: "selected" }));
-    setHasUnsavedChanges(true);
-    window.setTimeout(() => saveDraft(), 0);
   };
 
   const restoreVersion = (versionId: string) => {
@@ -1807,12 +1752,6 @@ export default function PodCreativeBuilder() {
     setAssetPlans(buildAssetPlans(version.concepts.filter((concept) => concept.selected), version.promptPacks));
     setToast("Version restored");
     window.setTimeout(() => setToast(""), 1400);
-  };
-
-  const approveAsset = (assetId: string) => {
-    setAssetPlans((current) =>
-      current.map((asset) => (asset.id === assetId ? { ...asset, status: asset.status === "approved" ? "planned" : "approved" } : asset)),
-    );
   };
 
   const download = (name: string, value: string, type: string) => {
@@ -1955,16 +1894,16 @@ export default function PodCreativeBuilder() {
       document.getElementById("product-brief")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (label === "Prompt Library") setActiveTab("Prompts");
+    if (label === "Prompt Library") setActiveTab("Component Prompts");
     else if (label === "Exports") setActiveTab("Export");
-    else setActiveTab(label === "Shopify Copy" ? "Shopify Copy" : label);
+    else setActiveTab(label === "Shopify Copy" ? "Copy" : label);
     outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const isNavActive = (label: string) => {
     if (label === "Dashboard" || label === "Projects" || label === "Drafts") return activeView === "Dashboard";
     if (label === "Competitor Briefs" || label === "Creative Generator") return activeView === "Product Brief";
-    if (label === "Prompt Library") return activeView === "Product Brief" && displayedActiveTab === "Prompts";
+    if (label === "Prompt Library") return activeView === "Product Brief" && displayedActiveTab === "Component Prompts";
     if (label === "Exports") return activeView === "Product Brief" && displayedActiveTab === "Export";
     if (label === "Settings") return activeView === "Settings";
     return false;
@@ -2197,23 +2136,14 @@ export default function PodCreativeBuilder() {
                       <p className="mb-4 text-xs font-medium uppercase tracking-[0.06em] text-secondary">Generated via {strategySource}</p>
                     ) : null}
                     <VersionHistoryPanel versions={versions} activeVersionId={activeVersionId} onRestore={restoreVersion} />
-                    {displayedActiveTab === "Analysis" && <OverviewTab analysis={analysis} onCopied={showCopied} />}
-                    {displayedActiveTab === "Custom Map" && <CustomMapTab analysis={analysis} onCopied={showCopied} />}
-                    {displayedActiveTab === "Opportunity" && <OpportunityTab opportunityScore={opportunityScore} analysis={analysis} onCopied={showCopied} />}
-                    {displayedActiveTab === "Angles" && <AnglesTab angleGroups={creativeAngleGroups} onCopied={showCopied} />}
+                    {displayedActiveTab === "Snapshot" && <SnapshotTab project={project} analysis={analysis} opportunityScore={opportunityScore} decomposition={productDecomposition} onCopied={showCopied} />}
+                    {displayedActiveTab === "Decomposition" && <DecompositionTab decomposition={productDecomposition} onCopied={showCopied} />}
+                    {displayedActiveTab === "Personalization Map" && <PersonalizationMapTab decomposition={productDecomposition} onCopied={showCopied} />}
+                    {displayedActiveTab === "Asset Plan" && <ComponentAssetPlanTab decomposition={productDecomposition} onCopied={showCopied} />}
+                    {displayedActiveTab === "Material Notes" && <MaterialNotesTab decomposition={productDecomposition} onCopied={showCopied} />}
                     {displayedActiveTab === "Ad Matrix" && <AdMatrixTab rows={adMatrixRows} onCopied={showCopied} onDownload={download} />}
-                    {displayedActiveTab === "Concepts" && (
-                      <ConceptsTab
-                        concepts={concepts}
-                        conceptExtras={conceptExtras}
-                        onToggle={toggleConcept}
-                        onUpdateExtra={updateConceptExtra}
-                        onCopied={showCopied}
-                        onRegenerate={regenerateConcepts}
-                      />
-                    )}
-                    {displayedActiveTab === "Prompts" && (
-                      <PromptsTab selectedConcepts={selectedConcepts} promptPacks={promptPacks} flags={outputFlags} onCopied={showCopied} />
+                    {displayedActiveTab === "Copy" && (
+                      <CopyOutcomeTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={outputFlags} onCopied={showCopied} />
                     )}
                     {displayedActiveTab === "Artwork Assets" && (
                       <ArtworkAssetsTab
@@ -2245,19 +2175,6 @@ export default function PodCreativeBuilder() {
                         onDownload={download}
                       />
                     )}
-                    {displayedActiveTab === "Creative Assets" && (
-                      <CreativeAssetsTab
-                        selectedConcepts={selectedConcepts}
-                        assetPlans={assetPlans}
-                        onApprove={approveAsset}
-                        onCopied={showCopied}
-                        onDownload={download}
-                      />
-                    )}
-                    {displayedActiveTab === "Shopify Copy" && (
-                      <ShopifyTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={outputFlags} onCopied={showCopied} />
-                    )}
-                    {displayedActiveTab === "Meta Ads" && <MetaTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={outputFlags} onCopied={showCopied} />}
                     {displayedActiveTab === "Export" && (
                       <ExportTab
                         markdown={markdown}
@@ -3087,120 +3004,233 @@ function LoadingState() {
   );
 }
 
-function OverviewTab({ analysis, onCopied }: { analysis: Analysis; onCopied: () => void }) {
-  const breakdown = analysis.productBreakdown;
+function SnapshotTab({
+  project,
+  analysis,
+  opportunityScore,
+  decomposition,
+  onCopied,
+}: {
+  project: Project;
+  analysis: Analysis;
+  opportunityScore: OpportunityScore;
+  decomposition: ProductDecomposition;
+  onCopied: () => void;
+}) {
+  const normalized = normalizeProject(project);
+  const requiredAssets = decomposition.componentAssetPlan.filter((asset) => asset.required).length;
+  const highRiskComponents = decomposition.designComponents.filter((component) => component.copyRisk === "High").length;
+  const snapshot = {
+    productType: normalized.normalizedProductType,
+    buyer: project.buyerPersona || analysis.productBreakdown.coreBuyer,
+    occasion: project.occasion || analysis.productBreakdown.coreOccasion,
+    coreMechanism: analysis.productBreakdown.visualMechanism,
+    opportunityScore: opportunityScore.overall,
+    assetComplexity: `${requiredAssets} required assets`,
+    copyRisk: decomposition.safeTransformationPlan.copyRisk,
+  };
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <TabIntro
-        eyebrow="Analysis"
-        title="Product strategy overview"
-        description="Use this as the strategic brief before designing, listing, or advertising the product."
-        action={<CopyButton value={JSON.stringify(analysis, null, 2)} onCopied={onCopied} label="Copy tab" />}
+        eyebrow="Snapshot"
+        title="Build-ready product snapshot"
+        description="Start here before generating assets. This summarizes the product mechanism, buyer, risk, and required component workload."
+        action={<CopyButton value={JSON.stringify(snapshot, null, 2)} onCopied={onCopied} label="Copy snapshot" />}
       />
       <div className="grid gap-3 md:grid-cols-4">
-        <InfoCard title="Product Type" value={breakdown.productType} />
-        <InfoCard title="Buyer Persona" value={breakdown.coreBuyer} />
-        <InfoCard title="Core Emotion" value={breakdown.coreEmotion} />
-        <InfoCard title="Occasion" value={breakdown.coreOccasion} />
+        <InfoCard title="Product Type" value={snapshot.productType} />
+        <InfoCard title="Buyer" value={snapshot.buyer} />
+        <InfoCard title="Occasion" value={snapshot.occasion} />
+        <InfoCard title="Opportunity" value={`${opportunityScore.overall}/10`} />
       </div>
-      <div className="flex flex-wrap gap-2">
-        <ScoreBadge label="Custom Depth" value={analysis.scores.customDepth} />
-        <ScoreBadge label="Ads Potential" value={analysis.scores.adsPotential} />
-        <ScoreBadge label="Production" value={analysis.scores.productionDifficulty} />
-        <ScoreBadge label="Copy Risk" value={analysis.scores.copyRisk} />
-      </div>
-      <PromptBlock title="Competitor Product Breakdown" value={JSON.stringify(breakdown, null, 2)} onCopied={onCopied} />
-      <div className="grid gap-4 md:grid-cols-3">
-        <ListCard title="Keep as inspiration" items={analysis.inspirationRules.keepAsInspiration} />
-        <ListCard title="Do not copy" items={analysis.inspirationRules.doNotCopy} danger />
-        <ListCard title="Improvement opportunities" items={analysis.improvementOpportunities} />
+      <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="rounded-xl border border-border bg-white p-5">
+          <h3 className="text-lg font-semibold">Core mechanism</h3>
+          <p className="mt-2 text-sm leading-6 text-secondary">{analysis.productBreakdown.visualMechanism}</p>
+          <div className="mt-4 grid gap-2 text-sm">
+            <Detail label="Personalization logic" value={analysis.productBreakdown.personalizationLogic} />
+            <Detail label="Likely purchase reason" value={analysis.productBreakdown.likelyPurchaseReason} />
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-white p-5">
+          <h3 className="text-lg font-semibold">Design workload</h3>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <Detail label="Components" value={`${decomposition.designComponents.length}`} />
+            <Detail label="Required assets" value={`${requiredAssets}`} />
+            <Detail label="High-risk components" value={`${highRiskComponents}`} />
+            <Detail label="Copy risk" value={decomposition.safeTransformationPlan.copyRisk} />
+          </dl>
+        </div>
       </div>
     </div>
   );
 }
 
-function OpportunityTab({ opportunityScore, analysis, onCopied }: { opportunityScore: OpportunityScore; analysis: Analysis; onCopied: () => void }) {
-  const rows = [
-    ["Custom Depth", opportunityScore.customDepth, opportunityScore.explanations.customDepth],
-    ["Emotional Pull", opportunityScore.emotionalPull, opportunityScore.explanations.emotionalPull],
-    ["Ad Creative Potential", opportunityScore.adCreativePotential, opportunityScore.explanations.adCreativePotential],
-    ["Giftability", opportunityScore.giftability, opportunityScore.explanations.giftability],
-    ["Seasonality", opportunityScore.seasonality, opportunityScore.explanations.seasonality],
-    ["Production Complexity", opportunityScore.productionComplexity, opportunityScore.explanations.productionComplexity],
-    ["Copycat Risk", opportunityScore.copycatRisk, opportunityScore.explanations.copycatRisk],
-  ] as const;
+function componentGroupLabel(component: DesignComponent) {
+  if (component.role === "customer_input") return "Customer Inputs";
+  if (component.role === "ai_generated_asset" || component.componentType === "clipart" || component.componentType === "character_body") return "Generated Artwork";
+  if (component.componentType.includes("text") || component.componentType === "typography" || component.componentType === "badge") return "Text / Typography";
+  if (component.role === "product_material" || component.role === "production_layer" || component.componentType === "product_base" || component.componentType === "material_effect" || component.componentType === "print_area") return "Material / Product Structure";
+  if (component.role === "mockup_scene" || component.componentType === "mockup_context") return "Mockup / Context";
+  return "Decorative / Options";
+}
 
+function DecompositionTab({ decomposition, onCopied }: { decomposition: ProductDecomposition; onCopied: () => void }) {
+  const groups = ["Customer Inputs", "Generated Artwork", "Text / Typography", "Material / Product Structure", "Mockup / Context", "Decorative / Options"];
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <TabIntro
-        eyebrow="Opportunity"
-        title="Product opportunity score"
-        description="Use this score to decide whether the competitor signal is worth turning into a creative testing pack."
-        action={<CopyButton value={JSON.stringify({ opportunityScore, antiCopyRules: analysis.inspirationRules }, null, 2)} onCopied={onCopied} label="Copy tab" />}
+        eyebrow="Decomposition"
+        title="Competitor design decomposition"
+        description="Break the competitor mechanism into buildable components, then decide what to keep as mechanism and what to change for originality."
+        action={<CopyButton value={JSON.stringify(decomposition.designComponents, null, 2)} onCopied={onCopied} label="Copy components" />}
       />
-      <section className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div className="rounded-xl border border-border bg-accent p-6">
-          <p className="text-sm font-medium text-secondary">Overall Opportunity</p>
-          <p className="mt-3 text-5xl font-semibold">{opportunityScore.overall}</p>
-          <p className="mt-2 text-sm text-secondary">out of 10</p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          {rows.map(([label, score, explanation]) => (
-            <article key={label} className="rounded-xl border border-border bg-white p-4">
-              <div className="flex items-center justify-between gap-3">
-                <h4 className="font-medium text-primary">{label}</h4>
-                <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", score >= 8 ? "bg-accent text-success" : score >= 6 ? "bg-amber-50 text-warning" : "bg-red-50 text-danger")}>
-                  {score}/10
-                </span>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-secondary">{explanation}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-      <div className="grid gap-4 md:grid-cols-3">
-        <ListCard title="Keep as inspiration" items={analysis.inspirationRules.keepAsInspiration} />
-        <ListCard title="Change to reduce copy risk" items={analysis.inspirationRules.safeTransformationDirections} />
-        <ListCard title="Do not copy" items={analysis.inspirationRules.doNotCopy} danger />
+      {groups.map((group) => {
+        const components = decomposition.designComponents.filter((component) => componentGroupLabel(component) === group);
+        if (!components.length) return null;
+        return (
+          <section key={group} className="space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">{group}</h3>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {components.map((component) => (
+                <article key={component.id} className="rounded-xl border border-border bg-white p-4">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">{component.componentType.replaceAll("_", " ")}</span>
+                    <span className="rounded-full bg-[#eaf4ff] px-3 py-1 text-xs font-semibold text-[#005bd3]">{component.role.replaceAll("_", " ")}</span>
+                    <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", component.copyRisk === "High" ? "bg-amber-50 text-warning" : "bg-[#e3f1df] text-[#108043]")}>{component.copyRisk} risk</span>
+                  </div>
+                  <h4 className="mt-3 font-semibold text-primary">{component.name}</h4>
+                  <p className="mt-2 text-sm leading-6 text-secondary">{component.description}</p>
+                  <dl className="mt-3 grid gap-2 text-xs text-secondary">
+                    <Detail label="Competitor source" value={component.sourceFromCompetitor} />
+                    <Detail label="Replace with" value={component.suggestedReplacement || "Keep mechanism, change expression and styling."} />
+                    <Detail label="Teeinblue layer" value={component.teeinblueLayerSuggestion || "Not mapped"} />
+                  </dl>
+                  {component.generationPrompt ? <p className="mt-3 rounded-lg bg-surface-muted p-3 font-mono text-xs leading-5 text-secondary">{component.generationPrompt}</p> : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function PersonalizationMapTab({ decomposition, onCopied }: { decomposition: ProductDecomposition; onCopied: () => void }) {
+  return (
+    <div className="space-y-6">
+      <TabIntro
+        eyebrow="Personalization Map"
+        title="Customer inputs and production mapping"
+        description="Shows what customers upload, type, or choose, and which production layer each field controls."
+        action={<CopyButton value={JSON.stringify(decomposition.personalizationMap, null, 2)} onCopied={onCopied} label="Copy map" />}
+      />
+      <div className="grid gap-3">
+        {decomposition.personalizationMap.map((item) => (
+          <article key={item.id} className="grid gap-3 rounded-xl border border-border bg-white p-4 lg:grid-cols-[1fr_180px_140px_1.4fr] lg:items-center">
+            <div>
+              <h3 className="font-semibold text-primary">{item.customerFacingLabel}</h3>
+              <p className="mt-1 text-sm text-secondary">{item.label}</p>
+            </div>
+            <span className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-secondary">{item.inputType.replaceAll("_", " ")}</span>
+            <span className={cx("rounded-lg px-3 py-2 text-sm font-semibold", item.required ? "bg-[#e3f1df] text-[#108043]" : "bg-surface-muted text-secondary")}>{item.required ? "Required" : "Optional"}</span>
+            <div className="text-sm text-secondary">
+              <p>{item.productionNote}</p>
+              <p className="mt-1 text-xs">Examples: {item.examples.join(", ")}</p>
+            </div>
+          </article>
+        ))}
       </div>
     </div>
   );
 }
 
-function AnglesTab({ angleGroups, onCopied }: { angleGroups: CreativeAngleGroup[]; onCopied: () => void }) {
-  const value = JSON.stringify(angleGroups, null, 2);
-
+function ComponentAssetPlanTab({ decomposition, onCopied }: { decomposition: ProductDecomposition; onCopied: () => void }) {
+  const groups: ComponentAssetPlan["priority"][] = ["Must Have", "Should Have", "Optional"];
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <TabIntro
-        eyebrow="Angles"
-        title="Creative scaling angles"
-        description="Use these grouped directions to scale buyer, occasion, humor, UGC, lifestyle, and bundle tests."
-        action={<CopyButton value={value} onCopied={onCopied} label="Copy tab" />}
+        eyebrow="Asset Plan"
+        title="Component asset checklist"
+        description="Generate or prepare these assets one by one before assembling the final design."
+        action={<CopyButton value={JSON.stringify(decomposition.componentAssetPlan, null, 2)} onCopied={onCopied} label="Copy asset plan" />}
       />
-      <div className="grid gap-4">
-        {angleGroups.map((group) => (
-          <details key={group.group} open className="border-b border-border pb-4 last:border-b-0">
-            <summary className="cursor-pointer text-lg font-semibold text-primary">{group.group}</summary>
-            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {group.angles.map((angle) => (
-                <article key={angle.id} className="rounded-xl border border-border bg-white p-4">
-                  <h4 className="font-medium text-primary">{angle.name}</h4>
-                  <p className="mt-2 text-sm leading-6 text-secondary">{angle.insight}</p>
-                  <p className="mt-3 rounded-lg bg-surface-muted px-3 py-2 text-sm font-medium text-primary">{angle.hook}</p>
-                  <p className="mt-3 text-xs leading-5 text-secondary">{angle.direction}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <CopyButton value={JSON.stringify(angle, null, 2)} onCopied={onCopied} label="Copy angle" />
-                    <button type="button" disabled className="inline-flex h-9 cursor-not-allowed items-center rounded-lg border border-border bg-surface-muted px-3 text-xs font-medium text-secondary">
-                      Generate concept later
-                    </button>
+      {groups.map((group) => {
+        const assets = decomposition.componentAssetPlan.filter((asset) => asset.priority === group);
+        if (!assets.length) return null;
+        return (
+          <section key={group} className="space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">{group}</h3>
+            <div className="grid gap-3">
+              {assets.map((asset) => (
+                <article key={asset.id} className="rounded-xl border border-border bg-white p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full bg-[#eaf4ff] px-3 py-1 text-xs font-semibold text-[#005bd3]">{asset.assetSource.replaceAll("_", " ")}</span>
+                        <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">{asset.recommendedFormat}</span>
+                        <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">{asset.recommendedTool}</span>
+                      </div>
+                      <h4 className="mt-3 font-semibold text-primary">{asset.assetName}</h4>
+                      <p className="mt-1 text-sm leading-6 text-secondary">{asset.assetPurpose}</p>
+                    </div>
+                    <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", asset.status === "Not Started" ? "bg-amber-50 text-warning" : "bg-[#e3f1df] text-[#108043]")}>{asset.status}</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-secondary">
+                    <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.required ? "Required" : "Optional"}</span>
+                    <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.suggestedSize || "Flexible size"}</span>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-start">
+                    <p className="min-w-0 flex-1 rounded-lg bg-surface-muted p-3 font-mono text-xs leading-5 text-secondary">{asset.prompt}</p>
+                    <CopyButton value={asset.prompt} onCopied={onCopied} label="Copy prompt" />
                   </div>
                 </article>
               ))}
             </div>
-          </details>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function MaterialNotesTab({ decomposition, onCopied }: { decomposition: ProductDecomposition; onCopied: () => void }) {
+  return (
+    <div className="space-y-6">
+      <TabIntro
+        eyebrow="Material Notes"
+        title="Material and production cues"
+        description="Use these notes to make generated assets and mockups feel physically plausible for the selected product type."
+        action={<CopyButton value={decomposition.materialNotes.map((item) => `- ${item}`).join("\n")} onCopied={onCopied} label="Copy notes" />}
+      />
+      <div className="grid gap-3 lg:grid-cols-2">
+        {decomposition.materialNotes.map((note, index) => (
+          <div key={note} className="rounded-xl border border-border bg-white p-4">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-accent text-sm font-semibold text-success">{index + 1}</span>
+            <p className="mt-3 text-sm leading-6 text-secondary">{note}</p>
+          </div>
         ))}
       </div>
+      <div className="rounded-xl border border-border bg-white p-5">
+        <h3 className="text-lg font-semibold">Safe transformation plan</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <ListCard title="Keep mechanism" items={decomposition.safeTransformationPlan.keep} />
+          <ListCard title="Change expression" items={decomposition.safeTransformationPlan.change} />
+          <ListCard title="Avoid copying" items={decomposition.safeTransformationPlan.avoid} danger />
+          <ListCard title="Originality moves" items={decomposition.safeTransformationPlan.originalityMoves} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CopyOutcomeTab({ selectedConcepts, copyPacks, flags, onCopied }: { selectedConcepts: Concept[]; copyPacks: Record<string, CopyPack>; flags: OutputFlags; onCopied: () => void }) {
+  return (
+    <div className="space-y-8">
+      <ShopifyTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={flags} onCopied={onCopied} />
+      <MetaTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={flags} onCopied={onCopied} />
     </div>
   );
 }
@@ -3321,200 +3351,11 @@ function ListCard({ title, items, danger = false }: { title: string; items: stri
   );
 }
 
-function CustomMapTab({ analysis, onCopied }: { analysis: Analysis; onCopied: () => void }) {
-  return (
-    <div className="space-y-5">
-      <TabIntro
-        eyebrow="Custom Map"
-        title="Personalization map"
-        description="Turn these rows into product options, image upload fields, and shopper-facing Shopify labels."
-        action={<CopyButton value={JSON.stringify(analysis.customFields, null, 2)} onCopied={onCopied} label="Copy tab" />}
-      />
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full min-w-[720px] border-collapse bg-white text-left text-sm">
-          <thead className="bg-surface-muted text-xs uppercase tracking-[0.06em] text-secondary">
-            <tr>
-              {["Custom Field", "Example", "Emotional Value", "Difficulty", "Recommended", "Shopify Label"].map((head) => (
-                <th key={head} className="px-4 py-3 font-medium">{head}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {analysis.customFields.map((field) => (
-              <tr key={field.name} className="border-t border-border">
-                <td className="px-4 py-3 font-semibold">{field.name}</td>
-                <td className="px-4 py-3 text-secondary">{field.example}</td>
-                <td className="px-4 py-3"><ScoreBadge label="" value={field.emotionalValue} /></td>
-                <td className="px-4 py-3"><ScoreBadge label="" value={field.difficulty} /></td>
-                <td className="px-4 py-3">{field.recommended ? "Yes" : "No"}</td>
-                <td className="px-4 py-3 text-secondary">{field.shopifyOptionLabel}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="grid gap-4 md:grid-cols-3">
-        <InfoCard title="Best combination" value="Photo + name + occasion date + short message" />
-        <InfoCard title="Fields to avoid" value="Long poems, copied competitor slogans, too many layout choices" />
-        <InfoCard title="Shopify label style" value="Plain, specific option names shoppers understand quickly" />
-      </div>
-    </div>
-  );
-}
-
-function ConceptsTab({
-  concepts,
-  conceptExtras,
-  onToggle,
-  onUpdateExtra,
-  onCopied,
-  onRegenerate,
-}: {
-  concepts: Concept[];
-  conceptExtras: ConceptExtras;
-  onToggle: (id: string) => void;
-  onUpdateExtra: (id: string, value: { favorite?: boolean; notes?: string }) => void;
-  onCopied: () => void;
-  onRegenerate: () => void;
-}) {
-  return (
-    <div className="space-y-4">
-      <TabIntro
-        eyebrow="Concepts"
-        title="Original product angles"
-        description="Select the angles you want to carry into prompts, Shopify copy, ads, and exports."
-        action={
-          <>
-            <CopyButton value={JSON.stringify(concepts, null, 2)} onCopied={onCopied} label="Copy tab" />
-            <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
-              <RefreshCw size={16} />
-              Regenerate
-            </button>
-          </>
-        }
-      />
-      <div className="hidden justify-end">
-        <button type="button" onClick={onRegenerate} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
-          <RefreshCw size={16} />
-          Regenerate concepts
-        </button>
-      </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {concepts.map((concept) => (
-          <article key={concept.id} className={cx("rounded-xl border p-5 transition", concept.selected ? "border-black/10 bg-accent" : "border-border bg-white hover:border-shade-30")}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-xl font-medium">{concept.name}</h3>
-                <p className="mt-2 text-sm leading-6 text-secondary">{concept.oneLineIdea}</p>
-              </div>
-              <button type="button" onClick={() => onToggle(concept.id)} className={cx("focus-ring h-9 shrink-0 rounded-lg px-4 text-xs font-medium", concept.selected ? "bg-primary text-white" : "border border-primary bg-white text-primary hover:bg-surface-muted")}>
-                {concept.selected ? "Selected" : "Choose concept"}
-              </button>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <ScoreBadge label="Custom" value={concept.scores.customDepth} />
-              <ScoreBadge label="Ads" value={concept.scores.adsPotential} />
-              <ScoreBadge label="Originality" value={concept.scores.copyRisk === "low" ? "high" : "medium"} />
-              <ScoreBadge label="Production" value={concept.scores.productionDifficulty} />
-            </div>
-            <dl className="mt-4 grid gap-3 text-sm">
-              <Detail label="Design" value={concept.designDirection} />
-              <Detail label="Mockup" value={concept.mockupDirection} />
-              <Detail label="Ad hook" value={concept.adHook} />
-            </dl>
-            <div className="mt-4 flex gap-2">
-              <CopyButton value={JSON.stringify(concept, null, 2)} onCopied={onCopied} label="Copy selected concept" />
-              <button
-                type="button"
-                onClick={() => onUpdateExtra(concept.id, { favorite: !conceptExtras[concept.id]?.favorite })}
-                className={cx(
-                  "focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium",
-                  conceptExtras[concept.id]?.favorite ? "border-black/10 bg-primary text-white" : "border-primary bg-white text-primary hover:bg-surface-muted",
-                )}
-              >
-                <Star size={14} />
-                {conceptExtras[concept.id]?.favorite ? "Favorited" : "Favorite"}
-              </button>
-              <button type="button" className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
-                <RefreshCw size={14} />
-                Regenerate
-              </button>
-            </div>
-            <div className="mt-4 space-y-2">
-              <FieldLabel>Why this concept is promising</FieldLabel>
-              <TextArea
-                value={conceptExtras[concept.id]?.notes || ""}
-                onChange={(value) => onUpdateExtra(concept.id, { notes: value })}
-                rows={3}
-                placeholder="Add selection notes, testing hypothesis, or production concerns."
-              />
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">{label}</dt>
       <dd className="mt-1 leading-6 text-secondary">{value}</dd>
-    </div>
-  );
-}
-
-function PromptsTab({
-  selectedConcepts,
-  promptPacks,
-  flags,
-  onCopied,
-}: {
-  selectedConcepts: Concept[];
-  promptPacks: Record<string, PromptPack>;
-  flags: OutputFlags;
-  onCopied: () => void;
-}) {
-  if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to generate prompt packs.</p>;
-  const visiblePromptKeys = new Set([
-    ...(flags.designPrompts ? ["designPrompt"] : []),
-    ...(flags.mockupPrompts
-      ? [
-          "lifestyleMockupPrompt",
-          "banner21x9Prompt",
-          "showcase16x9Prompt",
-          "product468x598Prompt",
-          "square1x1Prompt",
-          "reel9x16Prompt",
-        ]
-      : []),
-  ]);
-
-  return (
-    <div className="space-y-6">
-      <TabIntro
-        eyebrow="Prompts"
-        title="Design and lifestyle prompts"
-        description="Use these prompts to brief image generation, design production, mockup creation, and ad creative variants."
-        action={<CopyButton value={JSON.stringify(selectedConcepts.map((concept) => promptPacks[concept.id]).filter(Boolean), null, 2)} onCopied={onCopied} label="Copy tab" />}
-      />
-      {selectedConcepts.map((concept) => {
-        const pack = promptPacks[concept.id];
-        if (!pack) return null;
-        return (
-          <section key={concept.id} className="space-y-3">
-            <h3 className="text-lg font-semibold">{concept.name}</h3>
-            <div className="grid gap-3">
-              {Object.entries(pack)
-                .filter(([key]) => visiblePromptKeys.has(key))
-                .map(([key, value]) => (
-                  <PromptBlock key={key} title={key.replace(/([A-Z0-9])/g, " $1").trim()} value={String(value)} onCopied={onCopied} />
-                ))}
-            </div>
-          </section>
-        );
-      })}
     </div>
   );
 }
@@ -4172,77 +4013,6 @@ function MetaTab({
             <ListCard title="Headline options" items={pack.headlines} />
             <ListCard title="Testing plan" items={pack.testingPlan} />
             <PromptBlock title="UGC script idea" value={pack.ugcScriptIdea} onCopied={onCopied} />
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-function CreativeAssetsTab({
-  selectedConcepts,
-  assetPlans,
-  onApprove,
-  onCopied,
-  onDownload,
-}: {
-  selectedConcepts: Concept[];
-  assetPlans: CreativeAssetPlan[];
-  onApprove: (assetId: string) => void;
-  onCopied: () => void;
-  onDownload: (name: string, value: string, type: string) => void;
-}) {
-  if (!selectedConcepts.length) {
-    return <p className="text-sm text-secondary">Select concepts before planning creative assets.</p>;
-  }
-
-  const promptPack = assetPlans.map((asset) => `${asset.title} (${asset.ratio})\n${asset.prompt}`).join("\n\n");
-
-  return (
-    <div className="space-y-6">
-      <TabIntro
-        eyebrow="Creative Assets"
-        title="Production-ready asset plan"
-        description="Use these prompt cards as the handoff layer before connecting an image provider."
-        action={
-          <>
-            <CopyButton value={promptPack} onCopied={onCopied} label="Copy prompts" />
-            <button type="button" onClick={() => onDownload("creative-asset-prompts.txt", promptPack, "text/plain")} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
-              <Download size={16} />
-              Export prompts
-            </button>
-          </>
-        }
-      />
-      {selectedConcepts.map((concept) => {
-        const plans = assetPlans.filter((asset) => asset.conceptId === concept.id);
-        return (
-          <section key={concept.id} className="space-y-3">
-            <h3 className="text-xl font-medium">{concept.name}</h3>
-            <div className="grid gap-3 md:grid-cols-2">
-              {plans.map((asset) => (
-                <article key={asset.id} className="rounded-xl border border-border bg-white p-5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-lg border border-border bg-surface-muted px-3 py-1 text-xs font-medium text-secondary">{asset.type}</span>
-                    <span className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-medium text-secondary">{asset.ratio}</span>
-                    <span className={cx("rounded-full border px-3 py-1 text-xs font-medium", asset.status === "approved" ? "border-black/10 bg-accent text-primary" : "border-border bg-surface-muted text-secondary")}>
-                      {asset.status}
-                    </span>
-                  </div>
-                  <h4 className="mt-3 text-base font-medium">{asset.title}</h4>
-                  <p className="mt-2 max-h-32 overflow-auto text-sm leading-6 text-secondary">{asset.prompt}</p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <CopyButton value={asset.prompt} onCopied={onCopied} label="Copy prompt" />
-                    <button type="button" disabled className="inline-flex h-9 cursor-not-allowed items-center rounded-lg border border-border bg-surface-muted px-3 text-xs font-medium text-secondary">
-                      Provider not configured
-                    </button>
-                    <button type="button" onClick={() => onApprove(asset.id)} className="focus-ring inline-flex h-9 items-center rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
-                      {asset.status === "approved" ? "Unapprove" : "Approve"}
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
           </section>
         );
       })}

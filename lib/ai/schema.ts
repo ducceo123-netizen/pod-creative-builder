@@ -113,9 +113,84 @@ export const CopyPackSchema = z.object({
   testingPlan: StringArraySchema,
 });
 
+const DesignComponentSchema = z.object({
+  id: StringValueSchema,
+  name: StringValueSchema,
+  componentType: z.enum([
+    "uploaded_photo",
+    "clipart",
+    "character_body",
+    "face_cutout",
+    "typography",
+    "quote_text",
+    "name_text",
+    "date_text",
+    "badge",
+    "frame",
+    "background",
+    "pattern",
+    "product_base",
+    "material_effect",
+    "print_area",
+    "mockup_context",
+    "personalization_option",
+    "decorative_element",
+  ]),
+  role: z.enum(["customer_input", "ai_generated_asset", "template_asset", "manual_design_layer", "product_material", "mockup_scene", "production_layer"]),
+  description: StringValueSchema,
+  sourceFromCompetitor: StringValueSchema,
+  shouldKeepAsMechanism: z.boolean(),
+  shouldChangeForOriginality: z.boolean(),
+  copyRisk: z.enum(["Low", "Medium", "High"]),
+  suggestedReplacement: StringValueSchema.optional(),
+  generationPrompt: StringValueSchema.optional(),
+  materialNotes: StringValueSchema.optional(),
+  teeinblueLayerSuggestion: StringValueSchema.optional(),
+});
+
+const PersonalizationItemSchema = z.object({
+  id: StringValueSchema,
+  label: StringValueSchema,
+  inputType: z.enum(["photo_upload", "text", "dropdown", "color", "number", "date", "checkbox"]),
+  examples: StringArraySchema,
+  required: z.boolean(),
+  mapsToComponentId: StringValueSchema,
+  teeinblueFieldType: z.enum(["photo", "text", "dropdown", "checkbox", "color"]).optional(),
+  customerFacingLabel: StringValueSchema,
+  productionNote: StringValueSchema,
+});
+
+const ComponentAssetPlanSchema = z.object({
+  id: StringValueSchema,
+  componentId: StringValueSchema,
+  assetName: StringValueSchema,
+  assetPurpose: StringValueSchema,
+  assetSource: z.enum(["customer_upload", "ai_generated", "manual_design", "fixed_template", "mockup_context"]),
+  required: z.boolean(),
+  priority: z.enum(["Must Have", "Should Have", "Optional"]),
+  recommendedFormat: z.enum(["PNG transparent", "PNG", "JPG", "SVG", "PSD", "Text layer", "Prompt only"]),
+  recommendedTool: z.enum(["ChatGPT", "Ideogram", "Midjourney", "Figma", "Photoshop", "Teeinblue", "Any"]),
+  suggestedSize: StringValueSchema.optional(),
+  prompt: StringValueSchema,
+  status: z.enum(["Not Started", "Prompt Copied", "Generated", "Uploaded", "Approved", "Needs Revision"]),
+});
+
+const SafeTransformationPlanSchema = z.object({
+  keep: StringArraySchema,
+  change: StringArraySchema,
+  avoid: StringArraySchema,
+  originalityMoves: StringArraySchema,
+  copyRisk: z.enum(["Low", "Medium", "High"]),
+});
+
 export const StrategyResponseSchema = z.object({
   analysis: AnalysisSchema,
   concepts: z.array(ConceptSchema).min(1),
   promptPacks: z.record(z.string(), PromptPackSchema),
   copyPacks: z.record(z.string(), CopyPackSchema),
+  designComponents: z.array(DesignComponentSchema).optional(),
+  personalizationMap: z.array(PersonalizationItemSchema).optional(),
+  componentAssetPlan: z.array(ComponentAssetPlanSchema).optional(),
+  materialNotes: StringArraySchema.optional(),
+  safeTransformationPlan: SafeTransformationPlanSchema.optional(),
 });
