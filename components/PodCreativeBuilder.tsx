@@ -143,6 +143,19 @@ type CreativeAssetPlan = {
   createdAt: string;
 };
 
+type ComponentAssetWorkflowState = Record<
+  string,
+  {
+    status: ComponentAssetPlan["status"];
+    uploadedAssetUrl?: string;
+    uploadedAssetName?: string;
+    uploadedAssetType?: string;
+    uploadedAssetSource?: "local" | "supabase-storage";
+    uploadedAssetStoragePath?: string;
+    updatedAt: string;
+  }
+>;
+
 type OpportunityScore = {
   customDepth: number;
   emotionalPull: number;
@@ -198,6 +211,7 @@ type CreativeDraft = {
   screenshot?: ScreenshotState | null;
   conceptExtras?: ConceptExtras;
   assetPlans?: CreativeAssetPlan[];
+  componentAssetWorkflow?: ComponentAssetWorkflowState;
   generationMeta?: GenerationMeta;
   versions?: GenerationVersion[];
   exportRecords?: ExportRecord[];
@@ -527,6 +541,7 @@ function buildDraft(args: {
   screenshot: ScreenshotState | null;
   conceptExtras: ConceptExtras;
   assetPlans: CreativeAssetPlan[];
+  componentAssetWorkflow: ComponentAssetWorkflowState;
   generationMeta?: GenerationMeta;
   versions: GenerationVersion[];
   exportRecords: ExportRecord[];
@@ -555,6 +570,7 @@ function buildDraft(args: {
     screenshot: args.screenshot,
     conceptExtras: args.conceptExtras,
     assetPlans: args.assetPlans,
+    componentAssetWorkflow: args.componentAssetWorkflow,
     generationMeta: args.generationMeta,
     versions: args.versions,
     exportRecords: args.exportRecords,
@@ -1056,6 +1072,7 @@ export default function PodCreativeBuilder() {
   const [activeVersionId, setActiveVersionId] = useState("");
   const [conceptExtras, setConceptExtras] = useState<ConceptExtras>(() => getCurrentDraft()?.conceptExtras || {});
   const [assetPlans, setAssetPlans] = useState<CreativeAssetPlan[]>(() => getCurrentDraft()?.assetPlans || []);
+  const [componentAssetWorkflow, setComponentAssetWorkflow] = useState<ComponentAssetWorkflowState>(() => getCurrentDraft()?.componentAssetWorkflow || {});
   const [health, setHealth] = useState<{ groqConfigured: boolean; supabaseConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null>(null);
   const [draftSyncStatus, setDraftSyncStatus] = useState("Checking workspace sync");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -1085,7 +1102,16 @@ export default function PodCreativeBuilder() {
   const displayedActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] || "Snapshot";
   const readiness = useMemo(() => getReadiness(project, screenshot), [project, screenshot]);
   const opportunityScore = useMemo(() => getOpportunityScore(project, analysis), [analysis, project]);
-  const productDecomposition = useMemo(() => buildProductDecomposition(project, analysis, artworkAssets), [analysis, artworkAssets, project]);
+  const baseProductDecomposition = useMemo(() => buildProductDecomposition(project, analysis, artworkAssets), [analysis, artworkAssets, project]);
+  const productDecomposition = useMemo<ProductDecomposition>(
+    () => ({
+      ...baseProductDecomposition,
+      componentAssetPlan: baseProductDecomposition.componentAssetPlan.map((asset) =>
+        componentAssetWorkflow[asset.id] ? { ...asset, status: componentAssetWorkflow[asset.id].status } : asset,
+      ),
+    }),
+    [baseProductDecomposition, componentAssetWorkflow],
+  );
   const creativeAngleGroups = useMemo(() => buildCreativeAngleGroups(project, analysis), [analysis, project]);
   const adMatrixRows = useMemo(() => buildAdMatrixRows(project, analysis, concepts, copyPacks), [analysis, concepts, copyPacks, project]);
   const hasGeneratedPack = Boolean(analysis);
@@ -1121,6 +1147,7 @@ ${base}
         designComponents: productDecomposition.designComponents,
         personalizationMap: productDecomposition.personalizationMap,
         componentAssetPlan: productDecomposition.componentAssetPlan,
+        componentAssetWorkflow,
         componentPrompts: componentPromptPacks,
         materialNotes: productDecomposition.materialNotes,
         safeTransformationPlan: productDecomposition.safeTransformationPlan,
@@ -1143,7 +1170,7 @@ ${base}
       null,
       2,
     ));
-  }, [adMatrixRows, analysis, artworkAssets, assetPlans, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, exportRecords, generationMeta, opportunityScore, productDecomposition, project, promptPacks, screenshot, versions]);
+  }, [adMatrixRows, analysis, artworkAssets, assetPlans, componentAssetWorkflow, componentPromptPacks, concepts, copyPacks, creativeAngleGroups, exportRecords, generationMeta, opportunityScore, productDecomposition, project, promptPacks, screenshot, versions]);
   const genericExportWarning = useMemo(() => hasGenericOutputWarning(`${markdown}\n${jsonExportValue}`), [jsonExportValue, markdown]);
 
   useEffect(() => {
@@ -1210,6 +1237,7 @@ ${base}
       screenshot: sourceScreenshot,
       conceptExtras,
       assetPlans,
+      componentAssetWorkflow,
       generationMeta,
       versions,
       exportRecords,
@@ -1260,6 +1288,7 @@ ${base}
     };
     const nextVersions = [version, ...versions];
     const nextAssetPlans = buildAssetPlans(strategy.concepts.filter((concept) => concept.selected), strategy.promptPacks);
+    const nextComponentAssetWorkflow: ComponentAssetWorkflowState = {};
     const existing = drafts.find((draft) => draft.id === draftId);
     const nextDraft = buildDraft({
       id: draftId,
@@ -1273,6 +1302,7 @@ ${base}
       screenshot,
       conceptExtras,
       assetPlans: nextAssetPlans,
+      componentAssetWorkflow: nextComponentAssetWorkflow,
       generationMeta: meta,
       versions: nextVersions,
       exportRecords,
@@ -1296,6 +1326,7 @@ ${base}
     setVersions(nextVersions);
     setActiveVersionId(version.id);
     setAssetPlans(nextAssetPlans);
+    setComponentAssetWorkflow(nextComponentAssetWorkflow);
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
     void (async () => {
@@ -1415,6 +1446,7 @@ ${base}
       screenshot,
       conceptExtras,
       assetPlans,
+      componentAssetWorkflow,
       generationMeta,
       versions,
       exportRecords,
@@ -1479,6 +1511,91 @@ ${base}
     reader.readAsDataURL(file);
   };
 
+  const persistComponentAssetWorkflow = (nextWorkflow: ComponentAssetWorkflowState) => {
+    setComponentAssetWorkflow(nextWorkflow);
+    const existing = currentDraftId ? drafts.find((draft) => draft.id === currentDraftId) : null;
+    if (!currentDraftId || !existing) {
+      setHasUnsavedChanges(true);
+      return;
+    }
+
+    const draft = buildDraft({
+      id: currentDraftId,
+      project,
+      analysis,
+      concepts,
+      promptPacks,
+      artworkAssets,
+      componentPromptPacks,
+      copyPacks,
+      screenshot,
+      conceptExtras,
+      assetPlans,
+      componentAssetWorkflow: nextWorkflow,
+      generationMeta,
+      versions,
+      exportRecords,
+      inferredContext,
+      createdAt: existing.createdAt,
+    });
+    const nextDrafts = drafts.map((item) => (item.id === draft.id ? draft : item));
+    setDrafts(nextDrafts);
+    writeDrafts(nextDrafts);
+    void saveRemoteDraft(draft);
+    setHasUnsavedChanges(false);
+  };
+
+  const updateComponentAssetStatus = (assetId: string, status: ComponentAssetPlan["status"]) => {
+    const nextWorkflow: ComponentAssetWorkflowState = {
+      ...componentAssetWorkflow,
+      [assetId]: {
+        ...componentAssetWorkflow[assetId],
+        status,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    persistComponentAssetWorkflow(nextWorkflow);
+    setToast(`Component asset marked ${status}`);
+    window.setTimeout(() => setToast(""), 1400);
+  };
+
+  const uploadComponentAsset = (assetId: string, file: File) => {
+    if (!["image/png", "image/jpeg", "image/svg+xml"].includes(file.type)) {
+      setToast("Use PNG, JPG, or SVG");
+      window.setTimeout(() => setToast(""), 1400);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const localDataUrl = String(reader.result);
+      const remoteUpload = await uploadRemoteArtworkAsset({
+        draftId: currentDraftId || project.id,
+        assetId: `component-${assetId}`,
+        filename: file.name,
+        contentType: file.type,
+        dataUrl: localDataUrl,
+      });
+      const nextWorkflow: ComponentAssetWorkflowState = {
+        ...componentAssetWorkflow,
+        [assetId]: {
+          ...componentAssetWorkflow[assetId],
+          status: "Uploaded",
+          uploadedAssetUrl: remoteUpload?.storageUrl || localDataUrl,
+          uploadedAssetName: file.name,
+          uploadedAssetType: file.type,
+          uploadedAssetSource: remoteUpload ? "supabase-storage" : "local",
+          uploadedAssetStoragePath: remoteUpload?.path,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      persistComponentAssetWorkflow(nextWorkflow);
+      setToast(remoteUpload ? "Component asset uploaded to Supabase Storage" : "Component asset uploaded locally");
+      window.setTimeout(() => setToast(""), 1400);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const buildTeeinbluePackagesForSync = (draftId: string, conceptsToPackage = selectedConcepts) =>
     conceptsToPackage.map((concept) => {
       const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
@@ -1499,6 +1616,7 @@ ${base}
       screenshot,
       conceptExtras,
       assetPlans,
+      componentAssetWorkflow,
       generationMeta,
       versions,
       exportRecords,
@@ -1581,6 +1699,7 @@ ${base}
       screenshot,
       conceptExtras,
       assetPlans,
+      componentAssetWorkflow,
       generationMeta,
       versions,
       exportRecords,
@@ -1621,6 +1740,7 @@ ${base}
     setScreenshot(draft.screenshot || null);
     setConceptExtras(draft.conceptExtras || {});
     setAssetPlans(draft.assetPlans || []);
+    setComponentAssetWorkflow(draft.componentAssetWorkflow || {});
     setGenerationMeta(draft.generationMeta);
     setVersions(draft.versions || []);
     setExportRecords(draft.exportRecords || []);
@@ -1648,6 +1768,7 @@ ${base}
     setScreenshot(null);
     setConceptExtras({});
     setAssetPlans([]);
+    setComponentAssetWorkflow({});
     setGenerationMeta(undefined);
     setVersions([]);
     setExportRecords([]);
@@ -1728,6 +1849,7 @@ ${base}
     setScreenshot(null);
     setConceptExtras({});
     setAssetPlans([]);
+    setComponentAssetWorkflow({});
     setGenerationMeta(undefined);
     setVersions([]);
     setExportRecords([]);
@@ -1792,6 +1914,7 @@ ${base}
       screenshot,
       conceptExtras,
       assetPlans,
+      componentAssetWorkflow,
       generationMeta,
       versions,
       exportRecords: nextExportRecords,
@@ -1850,6 +1973,7 @@ ${base}
       screenshot,
       conceptExtras,
       assetPlans,
+      componentAssetWorkflow,
       generationMeta,
       versions,
       exportRecords: nextExportRecords,
@@ -2139,7 +2263,15 @@ ${base}
                     {displayedActiveTab === "Snapshot" && <SnapshotTab project={project} analysis={analysis} opportunityScore={opportunityScore} decomposition={productDecomposition} onCopied={showCopied} />}
                     {displayedActiveTab === "Decomposition" && <DecompositionTab decomposition={productDecomposition} onCopied={showCopied} />}
                     {displayedActiveTab === "Personalization Map" && <PersonalizationMapTab decomposition={productDecomposition} onCopied={showCopied} />}
-                    {displayedActiveTab === "Asset Plan" && <ComponentAssetPlanTab decomposition={productDecomposition} onCopied={showCopied} />}
+                    {displayedActiveTab === "Asset Plan" && (
+                      <ComponentAssetPlanTab
+                        decomposition={productDecomposition}
+                        workflow={componentAssetWorkflow}
+                        onStatusChange={updateComponentAssetStatus}
+                        onUpload={uploadComponentAsset}
+                        onCopied={showCopied}
+                      />
+                    )}
                     {displayedActiveTab === "Material Notes" && <MaterialNotesTab decomposition={productDecomposition} onCopied={showCopied} />}
                     {displayedActiveTab === "Ad Matrix" && <AdMatrixTab rows={adMatrixRows} onCopied={showCopied} onDownload={download} />}
                     {displayedActiveTab === "Copy" && (
@@ -3147,7 +3279,19 @@ function PersonalizationMapTab({ decomposition, onCopied }: { decomposition: Pro
   );
 }
 
-function ComponentAssetPlanTab({ decomposition, onCopied }: { decomposition: ProductDecomposition; onCopied: () => void }) {
+function ComponentAssetPlanTab({
+  decomposition,
+  workflow,
+  onStatusChange,
+  onUpload,
+  onCopied,
+}: {
+  decomposition: ProductDecomposition;
+  workflow: ComponentAssetWorkflowState;
+  onStatusChange: (assetId: string, status: ComponentAssetPlan["status"]) => void;
+  onUpload: (assetId: string, file: File) => void;
+  onCopied: () => void;
+}) {
   const groups: ComponentAssetPlan["priority"][] = ["Must Have", "Should Have", "Optional"];
   return (
     <div className="space-y-6">
@@ -3157,6 +3301,7 @@ function ComponentAssetPlanTab({ decomposition, onCopied }: { decomposition: Pro
         description="Generate or prepare these assets one by one before assembling the final design."
         action={<CopyButton value={JSON.stringify(decomposition.componentAssetPlan, null, 2)} onCopied={onCopied} label="Copy asset plan" />}
       />
+      <ComponentLayerPreview decomposition={decomposition} workflow={workflow} />
       {groups.map((group) => {
         const assets = decomposition.componentAssetPlan.filter((asset) => asset.priority === group);
         if (!assets.length) return null;
@@ -3166,6 +3311,21 @@ function ComponentAssetPlanTab({ decomposition, onCopied }: { decomposition: Pro
             <div className="grid gap-3">
               {assets.map((asset) => (
                 <article key={asset.id} className="rounded-xl border border-border bg-white p-4">
+                  {(() => {
+                    const uploaded = workflow[asset.id];
+                    return uploaded?.uploadedAssetUrl ? (
+                      <div className="mb-3 rounded-lg border border-border bg-surface-muted p-3">
+                        <div className="flex items-center gap-3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={uploaded.uploadedAssetUrl} alt={`${asset.assetName} uploaded preview`} className="h-16 w-16 rounded-md border border-border bg-white object-cover" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-primary">{uploaded.uploadedAssetName || "Uploaded component asset"}</p>
+                            <p className="text-xs text-secondary">{uploaded.uploadedAssetSource === "supabase-storage" ? "Stored in Supabase Storage." : "Local component preview."}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <div className="flex flex-wrap gap-2">
@@ -3186,6 +3346,34 @@ function ComponentAssetPlanTab({ decomposition, onCopied }: { decomposition: Pro
                     <p className="min-w-0 flex-1 rounded-lg bg-surface-muted p-3 font-mono text-xs leading-5 text-secondary">{asset.prompt}</p>
                     <CopyButton value={asset.prompt} onCopied={onCopied} label="Copy prompt" />
                   </div>
+                  <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+                    <label className="focus-ring inline-flex h-8 cursor-pointer items-center rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                      Upload asset
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/svg+xml"
+                        className="sr-only"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) onUpload(asset.id, file);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    {(["Not Started", "Prompt Copied", "Generated", "Uploaded", "Approved", "Needs Revision"] as const).map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => onStatusChange(asset.id, status)}
+                        className={cx(
+                          "focus-ring h-8 rounded-lg border px-3 text-xs font-medium",
+                          asset.status === status ? "border-primary bg-primary text-white" : "border-border bg-white text-secondary hover:bg-surface-muted",
+                        )}
+                      >
+                        {status === "Not Started" ? "Missing" : status}
+                      </button>
+                    ))}
+                  </div>
                 </article>
               ))}
             </div>
@@ -3193,6 +3381,72 @@ function ComponentAssetPlanTab({ decomposition, onCopied }: { decomposition: Pro
         );
       })}
     </div>
+  );
+}
+
+function ComponentLayerPreview({ decomposition, workflow }: { decomposition: ProductDecomposition; workflow: ComponentAssetWorkflowState }) {
+  const layerComponents = decomposition.designComponents.filter((component) => component.teeinblueLayerSuggestion || component.role !== "mockup_scene");
+  const completed = decomposition.componentAssetPlan.filter((asset) => {
+    const status = workflow[asset.id]?.status || asset.status;
+    return status === "Uploaded" || status === "Approved" || status === "Generated";
+  }).length;
+
+  return (
+    <section className="rounded-xl border border-border bg-surface-muted p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-primary">Layout plan preview</h3>
+          <p className="mt-1 text-sm leading-6 text-secondary">Approximate component/layer order for Figma, Photoshop, or Teeinblue assembly. This is a planning map, not a rendered design file.</p>
+        </div>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-secondary">
+          {completed}/{decomposition.componentAssetPlan.length} assets ready
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-[320px_1fr]">
+        <div className="relative mx-auto h-[360px] w-[280px] overflow-hidden rounded-xl border border-dashed border-shade-30 bg-white">
+          <div className="absolute inset-5 rounded-lg border border-dashed border-[#108043]" />
+          {layerComponents.slice(0, 8).map((component, index) => {
+            const isText = component.componentType.includes("text") || component.componentType === "typography" || component.componentType === "badge";
+            const isMaterial = component.role === "product_material" || component.role === "production_layer";
+            const top = 28 + index * 34;
+            const left = isText ? 52 : isMaterial ? 28 : 44;
+            const width = isText ? 176 : isMaterial ? 224 : 192;
+            const height = isText ? 28 : isMaterial ? 246 - index * 8 : 58;
+
+            return (
+              <div
+                key={component.id}
+                className={cx(
+                  "absolute grid place-items-center overflow-hidden border px-2 text-center text-[10px] font-semibold leading-tight",
+                  isMaterial ? "border-amber-300 bg-amber-50/70 text-warning" : isText ? "border-[#005bd3]/40 bg-[#eaf4ff]/80 text-[#005bd3]" : "border-[#108043]/40 bg-[#e3f1df]/80 text-[#108043]",
+                )}
+                style={{
+                  left,
+                  top: isMaterial ? 70 : top,
+                  width,
+                  height: Math.max(24, height),
+                  zIndex: index + 1,
+                }}
+              >
+                {component.teeinblueLayerSuggestion || component.name}
+              </div>
+            );
+          })}
+        </div>
+        <div className="grid gap-2">
+          {layerComponents.map((component, index) => (
+            <div key={component.id} className="grid gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm md:grid-cols-[40px_1fr_180px] md:items-center">
+              <span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-xs font-semibold text-success">{index + 1}</span>
+              <div className="min-w-0">
+                <p className="truncate font-medium text-primary">{component.name}</p>
+                <p className="truncate text-xs text-secondary">{component.role.replaceAll("_", " ")} · {component.componentType.replaceAll("_", " ")}</p>
+              </div>
+              <span className="rounded-lg border border-border bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">{component.teeinblueLayerSuggestion || "Manual layer"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
