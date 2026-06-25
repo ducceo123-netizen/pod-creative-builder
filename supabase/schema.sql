@@ -75,6 +75,21 @@ create table if not exists public.artwork_assets (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.component_asset_workflow (
+  id text primary key,
+  draft_id text references public.creative_drafts(id) on delete cascade,
+  asset_id text not null,
+  status text not null default 'Not Started',
+  uploaded_asset_url text,
+  uploaded_asset_name text,
+  uploaded_asset_type text,
+  uploaded_asset_source text,
+  uploaded_asset_storage_path text,
+  workflow jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.asset_slots (
   id text primary key,
   draft_id text references public.creative_drafts(id) on delete cascade,
@@ -159,6 +174,9 @@ create index if not exists export_records_export_type_idx on public.export_recor
 create index if not exists artwork_assets_draft_id_idx on public.artwork_assets (draft_id, updated_at desc);
 create index if not exists artwork_assets_concept_id_idx on public.artwork_assets (concept_id);
 create index if not exists artwork_assets_status_idx on public.artwork_assets (status);
+create index if not exists component_asset_workflow_draft_id_idx on public.component_asset_workflow (draft_id, updated_at desc);
+create index if not exists component_asset_workflow_asset_id_idx on public.component_asset_workflow (asset_id);
+create index if not exists component_asset_workflow_status_idx on public.component_asset_workflow (status);
 create index if not exists asset_slots_draft_id_idx on public.asset_slots (draft_id, updated_at desc);
 create index if not exists asset_slots_concept_id_idx on public.asset_slots (concept_id);
 create index if not exists asset_slots_status_idx on public.asset_slots (status);
@@ -181,6 +199,7 @@ $$;
 
 drop trigger if exists set_creative_drafts_updated_at on public.creative_drafts;
 drop trigger if exists set_artwork_assets_updated_at on public.artwork_assets;
+drop trigger if exists set_component_asset_workflow_updated_at on public.component_asset_workflow;
 drop trigger if exists set_asset_slots_updated_at on public.asset_slots;
 drop trigger if exists set_uploaded_assets_updated_at on public.uploaded_assets;
 drop trigger if exists set_layout_plans_updated_at on public.layout_plans;
@@ -193,6 +212,11 @@ execute function public.set_updated_at();
 
 create trigger set_artwork_assets_updated_at
 before update on public.artwork_assets
+for each row
+execute function public.set_updated_at();
+
+create trigger set_component_asset_workflow_updated_at
+before update on public.component_asset_workflow
 for each row
 execute function public.set_updated_at();
 
@@ -220,6 +244,7 @@ alter table public.creative_drafts enable row level security;
 alter table public.generation_versions enable row level security;
 alter table public.export_records enable row level security;
 alter table public.artwork_assets enable row level security;
+alter table public.component_asset_workflow enable row level security;
 alter table public.asset_slots enable row level security;
 alter table public.uploaded_assets enable row level security;
 alter table public.layout_plans enable row level security;

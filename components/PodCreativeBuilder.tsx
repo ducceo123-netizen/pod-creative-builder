@@ -31,7 +31,7 @@ import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strateg
 import { buildAssetSlots, buildDesignLayoutPlan, buildTeeinblueManifest, buildTeeinbluePackageSync, formatTeeinblueSetupGuide } from "@/lib/teeinbluePackage";
 import { createZipBlob, dataUrlToBytes, type ZipFileInput } from "@/lib/zipPackage";
 import type { Analysis } from "@/types/analysis";
-import type { ArtworkAsset } from "@/types/artworkAsset";
+import type { ArtworkAsset, ArtworkAssetGroup, ArtworkAssetType } from "@/types/artworkAsset";
 import type { ComponentPromptPack } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
@@ -349,6 +349,18 @@ async function saveRemoteArtworkAssets(draftId: string, assets: ArtworkAsset[]) 
   }
 }
 
+async function saveRemoteComponentAssetWorkflow(draftId: string, workflow: ComponentAssetWorkflowState) {
+  try {
+    await fetch("/api/component-asset-workflow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId, workflow }),
+    });
+  } catch {
+    // Draft payload remains the source of truth if workflow row sync is unavailable.
+  }
+}
+
 async function saveRemoteDesignPackages(draftId: string, packages: TeeinbluePackageSync[]) {
   try {
     const response = await fetch("/api/design-packages", {
@@ -606,6 +618,84 @@ function buildAssetPlans(selectedConcepts: Concept[], promptPacks: Record<string
       createdAt: now,
     }));
   });
+}
+
+function componentAssetArtworkId(conceptId: string, assetId: string) {
+  return `component-artwork-${conceptId}-${assetId}`;
+}
+
+function mapComponentAssetGroup(asset: ComponentAssetPlan): ArtworkAssetGroup {
+  if (asset.assetSource === "mockup_context") return "Mockup Assets";
+  if (asset.assetSource === "fixed_template") return "Material / Structure Assets";
+  return "Product Design Assets";
+}
+
+function mapComponentAssetType(asset: ComponentAssetPlan): ArtworkAssetType {
+  if (asset.assetSource === "customer_upload") return "face_integration";
+  if (asset.assetSource === "mockup_context") return "product_mockup";
+  if (asset.assetSource === "fixed_template") return "product_structure";
+  if (asset.recommendedFormat === "Text layer") return "typography";
+  if (asset.assetName.toLowerCase().includes("material")) return "material_detail";
+  return "main_artwork";
+}
+
+function mapComponentAssetTool(tool: ComponentAssetPlan["recommendedTool"]): ArtworkAsset["recommendedTool"] {
+  if (tool === "ChatGPT" || tool === "Ideogram" || tool === "Midjourney" || tool === "Figma" || tool === "Any") return tool;
+  return "Figma";
+}
+
+function mapComponentAssetFormat(format: ComponentAssetPlan["recommendedFormat"]): ArtworkAsset["outputFormat"] {
+  if (format === "PNG transparent" || format === "PNG") return "PNG transparent";
+  if (format === "JPG") return "JPG mockup";
+  if (format === "SVG") return "SVG/vector reference";
+  return "Prompt only";
+}
+
+function mapComponentAssetPriority(priority: ComponentAssetPlan["priority"]): ArtworkAsset["priority"] {
+  if (priority === "Must Have") return "Must Have";
+  if (priority === "Should Have") return "Good To Have";
+  return "Optional";
+}
+
+function mapComponentAssetStatus(status: ComponentAssetPlan["status"]): ArtworkAsset["status"] {
+  if (status === "Prompt Copied") return "Copied";
+  if (status === "Generated") return "Generated Externally";
+  if (status === "Uploaded" || status === "Approved" || status === "Needs Revision") return status;
+  return "Not Started";
+}
+
+function buildArtworkAssetFromComponentPlan(args: {
+  asset: ComponentAssetPlan;
+  concept: Concept;
+  project: Project;
+  draftId?: string | null;
+  workflow?: ComponentAssetWorkflowState[string];
+}): ArtworkAsset {
+  const now = new Date().toISOString();
+  return {
+    id: componentAssetArtworkId(args.concept.id, args.asset.id),
+    projectId: args.project.id,
+    generationId: args.draftId || undefined,
+    conceptId: args.concept.id,
+    conceptName: args.concept.name,
+    assetGroup: mapComponentAssetGroup(args.asset),
+    assetType: mapComponentAssetType(args.asset),
+    title: args.asset.assetName,
+    purpose: args.asset.assetPurpose,
+    prompt: args.asset.prompt,
+    recommendedTool: mapComponentAssetTool(args.asset.recommendedTool),
+    recommendedRatio: args.asset.suggestedSize,
+    outputFormat: mapComponentAssetFormat(args.asset.recommendedFormat),
+    priority: mapComponentAssetPriority(args.asset.priority),
+    uploadedAssetUrl: args.workflow?.uploadedAssetUrl,
+    uploadedAssetName: args.workflow?.uploadedAssetName,
+    uploadedAssetType: args.workflow?.uploadedAssetType,
+    uploadedAssetSource: args.workflow?.uploadedAssetSource,
+    uploadedAssetStoragePath: args.workflow?.uploadedAssetStoragePath,
+    status: mapComponentAssetStatus(args.workflow?.status || args.asset.status),
+    createdAt: now,
+    updatedAt: args.workflow?.updatedAt || now,
+  };
 }
 
 function buildComponentPromptPacks(selectedConcepts: Concept[], productType: string): Record<string, ComponentPromptPack> {
@@ -1426,7 +1516,7 @@ ${base}
     );
   };
 
-  const persistArtworkAssets = (nextArtworkAssets: ArtworkAsset[]) => {
+  const persistArtworkAssets = (nextArtworkAssets: ArtworkAsset[], workflowOverride = componentAssetWorkflow) => {
     setArtworkAssets(nextArtworkAssets);
     const existing = currentDraftId ? drafts.find((draft) => draft.id === currentDraftId) : null;
     if (!currentDraftId || !existing) {
@@ -1446,7 +1536,7 @@ ${base}
       screenshot,
       conceptExtras,
       assetPlans,
-      componentAssetWorkflow,
+      componentAssetWorkflow: workflowOverride,
       generationMeta,
       versions,
       exportRecords,
@@ -1459,8 +1549,38 @@ ${base}
     void (async () => {
       await saveRemoteDraft(draft);
       await saveRemoteArtworkAssets(draft.id, nextArtworkAssets);
+      await saveRemoteComponentAssetWorkflow(draft.id, workflowOverride);
     })();
     setHasUnsavedChanges(false);
+  };
+
+  const upsertArtworkFromComponentAsset = (assetId: string, workflow: ComponentAssetWorkflowState) => {
+    const componentAsset = productDecomposition.componentAssetPlan.find((asset) => asset.id === assetId);
+    const concept = selectedConcepts[0];
+    if (!componentAsset || !concept) return;
+
+    const now = new Date().toISOString();
+    const nextArtworkAsset = buildArtworkAssetFromComponentPlan({
+      asset: componentAsset,
+      concept,
+      project,
+      draftId: currentDraftId,
+      workflow: workflow[assetId],
+    });
+    const exists = artworkAssets.some((asset) => asset.id === nextArtworkAsset.id);
+    const nextArtworkAssets = exists
+      ? artworkAssets.map((asset) =>
+          asset.id === nextArtworkAsset.id
+            ? {
+                ...asset,
+                ...nextArtworkAsset,
+                createdAt: asset.createdAt,
+                updatedAt: workflow[assetId]?.updatedAt || now,
+              }
+            : asset,
+        )
+      : [nextArtworkAsset, ...artworkAssets];
+    persistArtworkAssets(nextArtworkAssets, workflow);
   };
 
   const updateArtworkAssetStatus = (assetId: string, status: ArtworkAsset["status"]) => {
@@ -1541,7 +1661,10 @@ ${base}
     const nextDrafts = drafts.map((item) => (item.id === draft.id ? draft : item));
     setDrafts(nextDrafts);
     writeDrafts(nextDrafts);
-    void saveRemoteDraft(draft);
+    void (async () => {
+      await saveRemoteDraft(draft);
+      await saveRemoteComponentAssetWorkflow(draft.id, nextWorkflow);
+    })();
     setHasUnsavedChanges(false);
   };
 
@@ -1555,6 +1678,7 @@ ${base}
       },
     };
     persistComponentAssetWorkflow(nextWorkflow);
+    upsertArtworkFromComponentAsset(assetId, nextWorkflow);
     setToast(`Component asset marked ${status}`);
     window.setTimeout(() => setToast(""), 1400);
   };
@@ -1590,15 +1714,33 @@ ${base}
         },
       };
       persistComponentAssetWorkflow(nextWorkflow);
+      upsertArtworkFromComponentAsset(assetId, nextWorkflow);
       setToast(remoteUpload ? "Component asset uploaded to Supabase Storage" : "Component asset uploaded locally");
       window.setTimeout(() => setToast(""), 1400);
     };
     reader.readAsDataURL(file);
   };
 
+  const getTeeinblueConceptAssets = (concept: Concept) => {
+    const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
+    const existingIds = new Set(conceptAssets.map((asset) => asset.id));
+    const componentAssets = productDecomposition.componentAssetPlan
+      .map((asset) =>
+        buildArtworkAssetFromComponentPlan({
+          asset,
+          concept,
+          project,
+          draftId: currentDraftId,
+          workflow: componentAssetWorkflow[asset.id],
+        }),
+      )
+      .filter((asset) => !existingIds.has(asset.id));
+    return [...conceptAssets, ...componentAssets];
+  };
+
   const buildTeeinbluePackagesForSync = (draftId: string, conceptsToPackage = selectedConcepts) =>
     conceptsToPackage.map((concept) => {
-      const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
+      const conceptAssets = getTeeinblueConceptAssets(concept);
       return buildTeeinbluePackageSync(draftId, project, concept, conceptAssets);
     });
 
@@ -1640,8 +1782,10 @@ ${base}
     const draftId = currentDraftId || id("draft");
     const draft = ensureDraftForPackage(draftId);
     const packages = buildTeeinbluePackagesForSync(draftId, concept ? [concept] : selectedConcepts);
+    const packageAssets = (concept ? [concept] : selectedConcepts).flatMap((item) => getTeeinblueConceptAssets(item));
     await saveRemoteDraft(draft);
-    await saveRemoteArtworkAssets(draftId, artworkAssets);
+    await saveRemoteArtworkAssets(draftId, packageAssets);
+    await saveRemoteComponentAssetWorkflow(draftId, componentAssetWorkflow);
     const source = await saveRemoteDesignPackages(draftId, packages);
     setToast(source === "supabase" ? "Teeinblue package synced" : "Package saved locally; Supabase table may need SQL");
     window.setTimeout(() => setToast(""), 1800);
@@ -1649,14 +1793,19 @@ ${base}
 
   const exportTeeinblueZip = async (concept: Concept) => {
     const draftId = currentDraftId || id("draft");
-    const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
+    const conceptAssets = getTeeinblueConceptAssets(concept);
     const packageSync = buildTeeinbluePackageSync(draftId, project, concept, conceptAssets);
+    const decompositionJson = JSON.stringify({ ...productDecomposition, componentAssetWorkflow }, null, 2);
     const filePrefix = concept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "teeinblue-package";
     const files: ZipFileInput[] = [
       { path: "design-package/setup_guide.md", data: packageSync.setupGuide },
       { path: "design-package/teeinblue_manifest.json", data: JSON.stringify(packageSync.manifest, null, 2) },
       { path: "design-package/layout_plan.json", data: JSON.stringify(packageSync.layoutPlan, null, 2) },
       { path: "design-package/asset_slots.json", data: JSON.stringify(packageSync.assetSlots, null, 2) },
+      { path: "design-package/component_asset_plan.json", data: JSON.stringify(productDecomposition.componentAssetPlan, null, 2) },
+      { path: "design-package/component_asset_workflow.json", data: JSON.stringify(componentAssetWorkflow, null, 2) },
+      { path: "product-decomposition/product-decomposition.md", data: formatProductDecompositionMarkdown(productDecomposition) },
+      { path: "product-decomposition/product-decomposition.json", data: decompositionJson },
     ];
 
     conceptAssets.forEach((asset) => {
@@ -1713,6 +1862,7 @@ ${base}
     void (async () => {
       await saveRemoteDraft(draft);
       await saveRemoteArtworkAssets(draft.id, artworkAssets);
+      await saveRemoteComponentAssetWorkflow(draft.id, componentAssetWorkflow);
     })();
     localStorage.setItem(CURRENT_DRAFT_ID_KEY, draft.id);
     localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(project));
@@ -2293,6 +2443,9 @@ ${base}
                         project={project}
                         selectedConcepts={selectedConcepts}
                         artworkAssets={artworkAssets}
+                        decomposition={productDecomposition}
+                        workflow={componentAssetWorkflow}
+                        draftId={currentDraftId}
                         onDownload={download}
                         onExportZip={exportTeeinblueZip}
                         onSyncPackage={syncTeeinbluePackages}
@@ -2311,6 +2464,8 @@ ${base}
                       <ExportTab
                         markdown={markdown}
                         jsonValue={jsonExportValue}
+                        productDecomposition={productDecomposition}
+                        componentAssetWorkflow={componentAssetWorkflow}
                         assetPlans={assetPlans}
                         artworkAssets={artworkAssets}
                         componentPromptPacks={componentPromptPacks}
@@ -3904,6 +4059,9 @@ function TeeinbluePackageTab({
   project,
   selectedConcepts,
   artworkAssets,
+  decomposition,
+  workflow,
+  draftId,
   onDownload,
   onExportZip,
   onSyncPackage,
@@ -3911,6 +4069,9 @@ function TeeinbluePackageTab({
   project: Project;
   selectedConcepts: Concept[];
   artworkAssets: ArtworkAsset[];
+  decomposition: ProductDecomposition;
+  workflow: ComponentAssetWorkflowState;
+  draftId?: string | null;
   onDownload: (name: string, value: string, type: string) => void;
   onExportZip: (concept: Concept) => void;
   onSyncPackage: (concept?: Concept) => void;
@@ -3932,14 +4093,28 @@ function TeeinbluePackageTab({
       />
       {selectedConcepts.map((concept) => {
         const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
-        const slots = buildAssetSlots(project, concept, conceptAssets);
-        const layout = buildDesignLayoutPlan(project, concept, conceptAssets);
-        const manifest = buildTeeinblueManifest(project, concept, conceptAssets);
+        const existingIds = new Set(conceptAssets.map((asset) => asset.id));
+        const componentAssets = decomposition.componentAssetPlan
+          .map((asset) =>
+            buildArtworkAssetFromComponentPlan({
+              asset,
+              concept,
+              project,
+              draftId,
+              workflow: workflow[asset.id],
+            }),
+          )
+          .filter((asset) => !existingIds.has(asset.id));
+        const packageAssets = [...conceptAssets, ...componentAssets];
+        const slots = buildAssetSlots(project, concept, packageAssets);
+        const layout = buildDesignLayoutPlan(project, concept, packageAssets);
+        const manifest = buildTeeinblueManifest(project, concept, packageAssets);
         const manifestJson = JSON.stringify(manifest, null, 2);
         const layoutJson = JSON.stringify(layout, null, 2);
-        const setupGuide = formatTeeinblueSetupGuide(project, concept, conceptAssets);
+        const setupGuide = formatTeeinblueSetupGuide(project, concept, packageAssets);
         const missingRequired = slots.filter((slot) => slot.required && slot.status === "Missing").length;
         const uploadedCount = slots.filter((slot) => slot.status === "Uploaded" || slot.status === "Approved").length;
+        const componentUploadedCount = decomposition.componentAssetPlan.filter((asset) => workflow[asset.id]?.uploadedAssetUrl).length;
         const filePrefix = concept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "teeinblue-package";
 
         return (
@@ -3982,12 +4157,38 @@ function TeeinbluePackageTab({
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[minmax(280px,420px)_1fr]">
-              <DesignCanvasPreview layout={layout} assets={conceptAssets} />
+              <DesignCanvasPreview layout={layout} assets={packageAssets} />
               <div className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-3">
                   <InfoCard title="Asset slots" value={`${slots.length}`} />
                   <InfoCard title="Uploaded / approved" value={`${uploadedCount}`} />
                   <InfoCard title="Personalization fields" value={`${manifest.personalizationFields.length}`} />
+                </div>
+                <div className="rounded-xl border border-border bg-white p-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">Component asset workflow</h4>
+                      <p className="mt-1 text-xs text-secondary">{componentUploadedCount}/{decomposition.componentAssetPlan.length} component assets have uploads.</p>
+                    </div>
+                    <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-medium text-secondary">Feeds Teeinblue slots</span>
+                  </div>
+                  <div className="mt-3 grid gap-2">
+                    {decomposition.componentAssetPlan.map((asset) => {
+                      const entry = workflow[asset.id];
+                      return (
+                        <div key={asset.id} className="grid gap-2 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm md:grid-cols-[1fr_auto_auto] md:items-center">
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-primary">{asset.assetName}</p>
+                            <p className="truncate text-xs text-secondary">{entry?.uploadedAssetName || asset.assetPurpose}</p>
+                          </div>
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-secondary">{asset.required ? "Required" : "Optional"}</span>
+                          <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", entry?.status === "Uploaded" || entry?.status === "Approved" ? "bg-[#e3f1df] text-[#108043]" : "bg-amber-50 text-warning")}>
+                            {entry?.status || asset.status}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="rounded-xl border border-border bg-white p-4">
                   <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">Teeinblue asset slots</h4>
@@ -4323,6 +4524,8 @@ function VersionHistoryPanel({
 function ExportTab({
   markdown,
   jsonValue,
+  productDecomposition,
+  componentAssetWorkflow,
   assetPlans,
   artworkAssets,
   componentPromptPacks,
@@ -4343,6 +4546,8 @@ function ExportTab({
 }: {
   markdown: string;
   jsonValue: string;
+  productDecomposition: ProductDecomposition;
+  componentAssetWorkflow: ComponentAssetWorkflowState;
   assetPlans: CreativeAssetPlan[];
   artworkAssets: ArtworkAsset[];
   componentPromptPacks: Record<string, ComponentPromptPack>;
@@ -4364,6 +4569,8 @@ function ExportTab({
   const assetPromptPack = assetPlans.map((asset) => `## ${asset.title}\n- Type: ${asset.type}\n- Ratio: ${asset.ratio}\n\n${asset.prompt}`).join("\n\n");
   const artworkAssetPack = formatArtworkAssetsMarkdown(artworkAssets);
   const artworkAssetJson = formatArtworkAssetsJson(artworkAssets);
+  const productDecompositionMarkdown = formatProductDecompositionMarkdown(productDecomposition);
+  const productDecompositionJson = JSON.stringify({ ...productDecomposition, componentAssetWorkflow }, null, 2);
   const componentPromptMarkdown = formatComponentPromptMarkdown(selectedConcepts, componentPromptPacks);
   const componentPromptJson = JSON.stringify(selectedConcepts.map((concept) => componentPromptPacks[concept.id]).filter(Boolean), null, 2);
   const chatGptPromptPack = analysis ? formatChatGPTCreativeBrief(selectedConcepts, componentPromptPacks, analysis) : "";
@@ -4467,6 +4674,8 @@ ${analysis?.inspirationRules.doNotCopy.map((item) => `- ${item}`).join("\n") || 
       <div className="grid gap-3 md:grid-cols-2">
         {[
           ["Opportunity Score", "opportunity-score.json", opportunityPack, "application/json"],
+          ["Product Decomposition", "product-decomposition.md", productDecompositionMarkdown, "text/markdown"],
+          ["Product Decomposition JSON", "product-decomposition.json", productDecompositionJson, "application/json"],
           ["Creative Angles", "creative-angles.md", anglePack || "No creative angles generated yet.", "text/markdown"],
           ["Ad Matrix", "ad-content-matrix.md", adMatrixPack || "No ad matrix generated yet.", "text/markdown"],
           ["Artwork Asset Pack", "artwork-asset-pack.md", artworkAssetPack || "No artwork assets generated yet.", "text/markdown"],
