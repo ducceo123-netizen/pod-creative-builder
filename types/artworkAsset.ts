@@ -34,7 +34,10 @@ export type ArtworkAsset = {
   recommendedRatio?: string;
   outputFormat?: "PNG transparent" | "JPG mockup" | "SVG/vector reference" | "Prompt only";
   priority: "Must Have" | "Good To Have" | "Optional";
-  status: "Not Started" | "Copied" | "Generated Externally" | "Approved" | "Needs Revision";
+  uploadedAssetUrl?: string;
+  uploadedAssetName?: string;
+  uploadedAssetType?: string;
+  status: "Not Started" | "Copied" | "Generated Externally" | "Uploaded" | "Approved" | "Needs Revision";
   createdAt: string;
   updatedAt: string;
 };

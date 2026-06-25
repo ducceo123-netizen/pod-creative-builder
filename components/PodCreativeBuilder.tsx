@@ -28,15 +28,17 @@ import { createProject, generateComponentPromptPack, generateConcepts, generateC
 import { buildSearchText, cleanGenericOtherLanguage, getCustomFields, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
+import { buildAssetSlots, buildDesignLayoutPlan, buildTeeinblueManifest, formatTeeinblueSetupGuide } from "@/lib/teeinbluePackage";
 import type { Analysis } from "@/types/analysis";
 import type { ArtworkAsset } from "@/types/artworkAsset";
 import type { ComponentPromptPack } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
+import type { DesignLayoutPlan } from "@/types/designPackage";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
-const tabs = ["Analysis", "Custom Map", "Opportunity", "Angles", "Ad Matrix", "Concepts", "Prompts", "Artwork Assets", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
+const tabs = ["Analysis", "Custom Map", "Opportunity", "Angles", "Ad Matrix", "Concepts", "Prompts", "Artwork Assets", "Teeinblue Package", "Component Prompts", "Creative Assets", "Shopify Copy", "Meta Ads", "Export"];
 const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
 const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
@@ -937,6 +939,7 @@ export default function PodCreativeBuilder() {
         if (tab === "Concepts") return outputFlags.concepts;
         if (tab === "Prompts") return outputFlags.designPrompts || outputFlags.mockupPrompts;
         if (tab === "Artwork Assets") return true;
+        if (tab === "Teeinblue Package") return true;
         if (tab === "Component Prompts") return true;
         if (tab === "Creative Assets") return true;
         if (tab === "Shopify Copy") return outputFlags.shopifyCopy || outputFlags.seo;
@@ -1279,6 +1282,35 @@ export default function PodCreativeBuilder() {
     persistArtworkAssets(nextArtworkAssets);
     setToast(`Asset marked ${status}`);
     window.setTimeout(() => setToast(""), 1400);
+  };
+
+  const uploadArtworkAsset = (assetId: string, file: File) => {
+    if (!["image/png", "image/jpeg", "image/svg+xml"].includes(file.type)) {
+      setToast("Use PNG, JPG, or SVG");
+      window.setTimeout(() => setToast(""), 1400);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const now = new Date().toISOString();
+      const nextArtworkAssets = artworkAssets.map((asset) =>
+        asset.id === assetId
+          ? {
+              ...asset,
+              uploadedAssetUrl: String(reader.result),
+              uploadedAssetName: file.name,
+              uploadedAssetType: file.type,
+              status: "Uploaded" as const,
+              updatedAt: now,
+            }
+          : asset,
+      );
+      persistArtworkAssets(nextArtworkAssets);
+      setToast("Asset uploaded locally");
+      window.setTimeout(() => setToast(""), 1400);
+    };
+    reader.readAsDataURL(file);
   };
 
   const saveDraft = () => {
@@ -1874,7 +1906,16 @@ export default function PodCreativeBuilder() {
                         selectedConcepts={selectedConcepts}
                         artworkAssets={artworkAssets}
                         onStatusChange={updateArtworkAssetStatus}
+                        onUpload={uploadArtworkAsset}
                         onCopied={showCopied}
+                        onDownload={download}
+                      />
+                    )}
+                    {displayedActiveTab === "Teeinblue Package" && (
+                      <TeeinbluePackageTab
+                        project={project}
+                        selectedConcepts={selectedConcepts}
+                        artworkAssets={artworkAssets}
                         onDownload={download}
                       />
                     )}
@@ -3217,6 +3258,7 @@ function ArtworkAssetsTab({
   selectedConcepts,
   artworkAssets,
   onStatusChange,
+  onUpload,
   onCopied,
   onDownload,
 }: {
@@ -3224,6 +3266,7 @@ function ArtworkAssetsTab({
   selectedConcepts: Concept[];
   artworkAssets: ArtworkAsset[];
   onStatusChange: (assetId: string, status: ArtworkAsset["status"]) => void;
+  onUpload: (assetId: string, file: File) => void;
   onCopied: () => void;
   onDownload: (name: string, value: string, type: string) => void;
 }) {
@@ -3303,6 +3346,7 @@ function ArtworkAssetsTab({
                           <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary">{asset.assetType.replaceAll("_", " ")}</span>
                           <span className="rounded-full bg-[#eaf4ff] px-3 py-1 text-xs font-semibold text-[#005bd3]">{asset.recommendedTool}</span>
                           <span className="rounded-full bg-[#e3f1df] px-3 py-1 text-xs font-semibold text-[#108043]">{asset.priority}</span>
+                          {asset.priority === "Must Have" && asset.status === "Not Started" ? <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-warning">Missing</span> : null}
                         </div>
                         <h5 className="mt-3 font-semibold text-primary">{asset.title}</h5>
                         <p className="mt-2 text-sm leading-6 text-secondary">{asset.purpose}</p>
@@ -3311,6 +3355,18 @@ function ArtworkAssetsTab({
                           <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.outputFormat || "Prompt only"}</span>
                           <span className="rounded-lg border border-border bg-surface-muted px-3 py-1">{asset.status}</span>
                         </div>
+                        {asset.uploadedAssetUrl ? (
+                          <div className="mt-3 rounded-lg border border-border bg-surface-muted p-3">
+                            <div className="flex items-center gap-3">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={asset.uploadedAssetUrl} alt={`${asset.title} uploaded preview`} className="h-16 w-16 rounded-md border border-border bg-white object-cover" />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium text-primary">{asset.uploadedAssetName || "Uploaded asset"}</p>
+                                <p className="text-xs text-secondary">Local preview. Supabase Storage can be added later.</p>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                         <p className="mt-3 max-h-36 overflow-auto rounded-lg bg-surface-muted p-3 font-mono text-xs leading-5 text-secondary">{asset.prompt}</p>
                         <div className="mt-4 flex flex-wrap gap-2">
                           <CopyButton
@@ -3355,6 +3411,19 @@ function ArtworkAssetsTab({
                           />
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+                          <label className="focus-ring inline-flex h-8 cursor-pointer items-center rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                            Upload asset
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/svg+xml"
+                              className="sr-only"
+                              onChange={(event) => {
+                                const file = event.target.files?.[0];
+                                if (file) onUpload(asset.id, file);
+                                event.currentTarget.value = "";
+                              }}
+                            />
+                          </label>
                           {(["Copied", "Generated Externally", "Approved", "Needs Revision"] as const).map((status) => (
                             <button
                               key={status}
@@ -3378,6 +3447,175 @@ function ArtworkAssetsTab({
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function TeeinbluePackageTab({
+  project,
+  selectedConcepts,
+  artworkAssets,
+  onDownload,
+}: {
+  project: Project;
+  selectedConcepts: Concept[];
+  artworkAssets: ArtworkAsset[];
+  onDownload: (name: string, value: string, type: string) => void;
+}) {
+  if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to build a Teeinblue package.</p>;
+
+  return (
+    <div className="space-y-6">
+      <TabIntro
+        eyebrow="Teeinblue Package"
+        title="Design package planning"
+        description="Turn approved artwork prompts and uploads into Teeinblue-ready slots, layout layers, manifest JSON, and a setup guide. This does not generate images or publish products."
+      />
+      {selectedConcepts.map((concept) => {
+        const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
+        const slots = buildAssetSlots(project, concept, conceptAssets);
+        const layout = buildDesignLayoutPlan(project, concept, conceptAssets);
+        const manifest = buildTeeinblueManifest(project, concept, conceptAssets);
+        const manifestJson = JSON.stringify(manifest, null, 2);
+        const layoutJson = JSON.stringify(layout, null, 2);
+        const setupGuide = formatTeeinblueSetupGuide(project, concept, conceptAssets);
+        const missingRequired = slots.filter((slot) => slot.required && slot.status === "Missing").length;
+        const uploadedCount = slots.filter((slot) => slot.status === "Uploaded" || slot.status === "Approved").length;
+        const filePrefix = concept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "teeinblue-package";
+
+        return (
+          <section key={concept.id} className="space-y-5 border-b border-border pb-6 last:border-b-0">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-xl font-semibold text-primary">{concept.name}</h3>
+                  <span className="rounded-full bg-[#eaf4ff] px-3 py-1 text-xs font-semibold text-[#005bd3]">{layout.printArea.name}</span>
+                  <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", missingRequired ? "bg-amber-50 text-warning" : "bg-[#e3f1df] text-[#108043]")}>
+                    {missingRequired ? `${missingRequired} missing required` : "Required slots ready"}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm leading-6 text-secondary">
+                  Canvas {layout.canvas.width} x {layout.canvas.height}px. {uploadedCount}/{slots.length} slots have uploaded or approved assets.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => onDownload(`${filePrefix}-teeinblue-manifest.json`, manifestJson, "application/json")} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <FileJson size={14} />
+                  Manifest JSON
+                </button>
+                <button type="button" onClick={() => onDownload(`${filePrefix}-layout-plan.json`, layoutJson, "application/json")} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Layers3 size={14} />
+                  Layout JSON
+                </button>
+                <button type="button" onClick={() => onDownload(`${filePrefix}-setup-guide.md`, setupGuide, "text/markdown")} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Download size={14} />
+                  Setup Guide
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(280px,420px)_1fr]">
+              <DesignCanvasPreview layout={layout} assets={conceptAssets} />
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <InfoCard title="Asset slots" value={`${slots.length}`} />
+                  <InfoCard title="Uploaded / approved" value={`${uploadedCount}`} />
+                  <InfoCard title="Personalization fields" value={`${manifest.personalizationFields.length}`} />
+                </div>
+                <div className="rounded-xl border border-border bg-white p-4">
+                  <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">Teeinblue asset slots</h4>
+                  <div className="mt-3 grid gap-2">
+                    {slots.map((slot) => (
+                      <div key={slot.id} className="grid gap-2 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm md:grid-cols-[1fr_auto_auto] md:items-center">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-primary">{slot.slotKey}</p>
+                          <p className="truncate text-xs text-secondary">{slot.title}</p>
+                        </div>
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-secondary">{slot.recommendedFormat}</span>
+                        <span className={cx("rounded-full px-3 py-1 text-xs font-semibold", slot.status === "Missing" ? "bg-amber-50 text-warning" : "bg-[#e3f1df] text-[#108043]")}>{slot.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-border bg-white p-4">
+                  <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">Setup guide preview</h4>
+                  <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-surface-muted p-3 text-xs leading-5 text-secondary whitespace-pre-wrap">{setupGuide}</pre>
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function DesignCanvasPreview({ layout, assets }: { layout: DesignLayoutPlan; assets: ArtworkAsset[] }) {
+  const previewMax = 360;
+  const scale = previewMax / Math.max(layout.canvas.width, layout.canvas.height);
+  const width = Math.round(layout.canvas.width * scale);
+  const height = Math.round(layout.canvas.height * scale);
+  const printInset = layout.printArea.safeMargin * scale;
+
+  return (
+    <div className="rounded-xl border border-border bg-surface-muted p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">Canvas preview</h4>
+          <p className="mt-1 text-xs text-secondary">
+            {layout.printArea.name} / {layout.canvas.width} x {layout.canvas.height}px
+          </p>
+        </div>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-secondary">{layout.layers.length} layers</span>
+      </div>
+      <div
+        className="relative mx-auto overflow-hidden border border-dashed border-shade-30 bg-white"
+        style={{
+          width,
+          height,
+        }}
+      >
+        <div
+          className="pointer-events-none absolute border border-dashed border-[#108043]"
+          style={{
+            left: printInset,
+            top: printInset,
+            right: printInset,
+            bottom: printInset,
+          }}
+        />
+        {layout.layers.map((layer) => {
+          const asset = assets.find((item) => `layer-${item.id}` === layer.id);
+          const isGuide = layer.teeinblueRole === "guide_do_not_print";
+          const left = Math.round(layer.x * scale);
+          const top = Math.round(layer.y * scale);
+          const layerWidth = Math.max(18, Math.round(layer.width * scale));
+          const layerHeight = Math.max(18, Math.round(layer.height * scale));
+
+          return (
+            <div
+              key={layer.id}
+              className={cx("absolute grid place-items-center overflow-hidden border text-center text-[10px] font-semibold leading-tight", isGuide ? "border-amber-300 bg-amber-50/60 text-warning" : "border-[#005bd3]/40 bg-[#eaf4ff]/70 text-[#005bd3]")}
+              style={{
+                left,
+                top,
+                width: layerWidth,
+                height: layerHeight,
+                zIndex: layer.zIndex,
+              }}
+              title={`${layer.name} - ${layer.teeinblueRole}`}
+            >
+              {asset?.uploadedAssetUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={asset.uploadedAssetUrl} alt={`${asset.title} preview`} className="h-full w-full object-cover" />
+              ) : (
+                <span className="px-1">{layer.name}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-xs leading-5 text-secondary">Preview is a planning map for layer order and personalization mapping, not a pixel-perfect Teeinblue renderer.</p>
     </div>
   );
 }
