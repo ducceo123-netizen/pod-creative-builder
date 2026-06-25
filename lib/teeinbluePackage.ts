@@ -1,6 +1,6 @@
 import type { ArtworkAsset, ArtworkAssetType } from "@/types/artworkAsset";
 import type { Concept } from "@/types/concept";
-import type { AssetSlot, DesignLayoutPlan, DesignLayerPlan } from "@/types/designPackage";
+import type { AssetSlot, DesignLayoutPlan, DesignLayerPlan, TeeinbluePackageSync } from "@/types/designPackage";
 import type { Project } from "@/types/project";
 
 function fileSafe(value: string) {
@@ -188,4 +188,43 @@ ${layout.layers.map((layer, index) => `${index + 1}. ${layer.name}`).join("\n")}
 - Confirm guide layers are hidden or marked as do-not-print.
 - Confirm order design layers match the buyer-facing preview.
 `;
+}
+
+export function buildTeeinbluePackageSync(draftId: string, project: Project, concept: Concept, assets: ArtworkAsset[]): TeeinbluePackageSync {
+  const now = new Date().toISOString();
+  const assetSlots = buildAssetSlots(project, concept, assets);
+  const layoutPlan = buildDesignLayoutPlan(project, concept, assets);
+  const manifest = buildTeeinblueManifest(project, concept, assets);
+  const setupGuide = formatTeeinblueSetupGuide(project, concept, assets);
+
+  return {
+    id: `teeinblue-package-${concept.id}`,
+    draftId,
+    projectId: project.id,
+    generationId: assets[0]?.generationId || "",
+    conceptId: concept.id,
+    conceptName: concept.name,
+    productType: project.productType || "Custom POD Product",
+    assetSlots,
+    layoutPlan,
+    manifest,
+    setupGuide,
+    uploadedAssets: assets
+      .filter((asset) => asset.uploadedAssetUrl)
+      .map((asset) => {
+        const slot = assetSlots.find((item) => item.slotKey === layerName(asset));
+        return {
+          id: `uploaded-${asset.id}`,
+          artworkAssetId: asset.id,
+          slotId: slot?.id || `slot-${asset.id}`,
+          conceptId: concept.id,
+          filename: asset.uploadedAssetName || `${fileSafe(asset.title)}.png`,
+          contentType: asset.uploadedAssetType,
+          url: asset.uploadedAssetUrl || "",
+          localPreview: asset.uploadedAssetUrl?.startsWith("data:") ?? true,
+        };
+      }),
+    createdAt: now,
+    updatedAt: now,
+  };
 }

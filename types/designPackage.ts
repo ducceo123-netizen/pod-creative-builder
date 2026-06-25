@@ -75,3 +75,29 @@ export type DesignLayerPlan = {
     | "guide_do_not_print";
   visibleOn: "mockup_and_order" | "mockup_only" | "order_only";
 };
+
+export type TeeinbluePackageSync = {
+  id: string;
+  draftId: string;
+  projectId: string;
+  generationId: string;
+  conceptId: string;
+  conceptName: string;
+  productType: string;
+  assetSlots: AssetSlot[];
+  layoutPlan: DesignLayoutPlan;
+  manifest: unknown;
+  setupGuide: string;
+  uploadedAssets: Array<{
+    id: string;
+    artworkAssetId: string;
+    slotId: string;
+    conceptId: string;
+    filename: string;
+    contentType?: string;
+    url: string;
+    localPreview: boolean;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};

@@ -28,13 +28,14 @@ import { createProject, generateComponentPromptPack, generateConcepts, generateC
 import { buildSearchText, cleanGenericOtherLanguage, getCustomFields, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
-import { buildAssetSlots, buildDesignLayoutPlan, buildTeeinblueManifest, formatTeeinblueSetupGuide } from "@/lib/teeinbluePackage";
+import { buildAssetSlots, buildDesignLayoutPlan, buildTeeinblueManifest, buildTeeinbluePackageSync, formatTeeinblueSetupGuide } from "@/lib/teeinbluePackage";
+import { createZipBlob, dataUrlToBytes, type ZipFileInput } from "@/lib/zipPackage";
 import type { Analysis } from "@/types/analysis";
 import type { ArtworkAsset } from "@/types/artworkAsset";
 import type { ComponentPromptPack } from "@/types/componentPrompt";
 import type { Concept } from "@/types/concept";
 import type { CopyPack } from "@/types/copyPack";
-import type { DesignLayoutPlan } from "@/types/designPackage";
+import type { DesignLayoutPlan, TeeinbluePackageSync } from "@/types/designPackage";
 import type { Project } from "@/types/project";
 import type { PromptPack } from "@/types/promptPack";
 
@@ -307,6 +308,21 @@ async function saveRemoteArtworkAssets(draftId: string, assets: ArtworkAsset[]) 
     });
   } catch {
     // Draft payload remains the source of truth if asset row sync is unavailable.
+  }
+}
+
+async function saveRemoteDesignPackages(draftId: string, packages: TeeinbluePackageSync[]) {
+  try {
+    const response = await fetch("/api/design-packages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId, packages }),
+    });
+    if (!response.ok) return "local-fallback";
+    const data = (await response.json()) as { source?: string };
+    return data.source || "local-fallback";
+  } catch {
+    return "local-fallback";
   }
 }
 
@@ -1313,6 +1329,88 @@ export default function PodCreativeBuilder() {
     reader.readAsDataURL(file);
   };
 
+  const buildTeeinbluePackagesForSync = (draftId: string, conceptsToPackage = selectedConcepts) =>
+    conceptsToPackage.map((concept) => {
+      const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
+      return buildTeeinbluePackageSync(draftId, project, concept, conceptAssets);
+    });
+
+  const ensureDraftForPackage = (draftId: string) => {
+    const existing = drafts.find((draft) => draft.id === draftId);
+    const draft = buildDraft({
+      id: draftId,
+      project,
+      analysis,
+      concepts,
+      promptPacks,
+      artworkAssets,
+      componentPromptPacks,
+      copyPacks,
+      screenshot,
+      conceptExtras,
+      assetPlans,
+      generationMeta,
+      versions,
+      exportRecords,
+      inferredContext,
+      createdAt: existing?.createdAt,
+    });
+    const nextDrafts = existing ? drafts.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...drafts];
+    setCurrentDraftId(draftId);
+    setDrafts(nextDrafts);
+    writeDrafts(nextDrafts);
+    localStorage.setItem(CURRENT_DRAFT_ID_KEY, draftId);
+    return draft;
+  };
+
+  const syncTeeinbluePackages = async (concept?: Concept) => {
+    if (!selectedConcepts.length) {
+      setToast("Select a concept first");
+      window.setTimeout(() => setToast(""), 1400);
+      return;
+    }
+    const draftId = currentDraftId || id("draft");
+    const draft = ensureDraftForPackage(draftId);
+    const packages = buildTeeinbluePackagesForSync(draftId, concept ? [concept] : selectedConcepts);
+    await saveRemoteDraft(draft);
+    await saveRemoteArtworkAssets(draftId, artworkAssets);
+    const source = await saveRemoteDesignPackages(draftId, packages);
+    setToast(source === "supabase" ? "Teeinblue package synced" : "Package saved locally; Supabase table may need SQL");
+    window.setTimeout(() => setToast(""), 1800);
+  };
+
+  const exportTeeinblueZip = (concept: Concept) => {
+    const draftId = currentDraftId || id("draft");
+    const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
+    const packageSync = buildTeeinbluePackageSync(draftId, project, concept, conceptAssets);
+    const filePrefix = concept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "teeinblue-package";
+    const files: ZipFileInput[] = [
+      { path: "design-package/setup_guide.md", data: packageSync.setupGuide },
+      { path: "design-package/teeinblue_manifest.json", data: JSON.stringify(packageSync.manifest, null, 2) },
+      { path: "design-package/layout_plan.json", data: JSON.stringify(packageSync.layoutPlan, null, 2) },
+      { path: "design-package/asset_slots.json", data: JSON.stringify(packageSync.assetSlots, null, 2) },
+      { path: "exports/final_preview_note.txt", data: "Preview PNG compositing is not generated in this MVP. Use the layout_plan.json and uploaded assets to assemble the final preview in Teeinblue/Figma." },
+    ];
+
+    conceptAssets.forEach((asset) => {
+      if (!asset.uploadedAssetUrl?.startsWith("data:")) return;
+      const extension = asset.uploadedAssetName?.split(".").pop() || (asset.uploadedAssetType === "image/svg+xml" ? "svg" : asset.uploadedAssetType === "image/jpeg" ? "jpg" : "png");
+      const safeName = (asset.uploadedAssetName || asset.title).toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || asset.id;
+      files.push({
+        path: `design-package/assets/${safeName}.${extension}`,
+        data: dataUrlToBytes(asset.uploadedAssetUrl),
+      });
+    });
+
+    const zip = createZipBlob(files);
+    downloadBlob(`${filePrefix}-teeinblue-package.zip`, zip, {
+      conceptId: concept.id,
+      packageType: "teeinblue",
+      assetCount: conceptAssets.length,
+      uploadedAssetCount: packageSync.uploadedAssets.length,
+    });
+  };
+
   const saveDraft = () => {
     const existing = currentDraftId ? drafts.find((draft) => draft.id === currentDraftId) : null;
     const draft = buildDraft({
@@ -1560,6 +1658,64 @@ export default function PodCreativeBuilder() {
         activeTab: displayedActiveTab,
         activeVersionId: activeVersionId || versions[0]?.id || null,
         generationSource: generationMeta?.generationSource || null,
+      },
+      createdAt: new Date().toISOString(),
+    };
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = name;
+    link.click();
+    URL.revokeObjectURL(href);
+    const nextExportRecords = [record, ...exportRecords].slice(0, 25);
+    const nextProject: Project = { ...project, status: "exported", updatedAt: new Date().toISOString() };
+    const existing = drafts.find((draft) => draft.id === draftId);
+    const nextDraft = buildDraft({
+      id: draftId,
+      project: nextProject,
+      analysis,
+      concepts,
+      promptPacks,
+      artworkAssets,
+      componentPromptPacks,
+      copyPacks,
+      screenshot,
+      conceptExtras,
+      assetPlans,
+      generationMeta,
+      versions,
+      exportRecords: nextExportRecords,
+      inferredContext,
+      createdAt: existing?.createdAt,
+    });
+    const nextDrafts = existing ? drafts.map((draft) => (draft.id === draftId ? nextDraft : draft)) : [nextDraft, ...drafts];
+    setExportRecords(nextExportRecords);
+    setProject(nextProject);
+    setCurrentDraftId(draftId);
+    setDrafts(nextDrafts);
+    writeDrafts(nextDrafts);
+    localStorage.setItem(CURRENT_DRAFT_ID_KEY, draftId);
+    localStorage.setItem(PROJECT_DRAFT_KEY, JSON.stringify(nextProject));
+    void (async () => {
+      await saveRemoteDraft(nextDraft);
+      await saveRemoteExport(record);
+    })();
+  };
+
+  const downloadBlob = (name: string, blob: Blob, metadata: Record<string, unknown> = {}) => {
+    const draftId = currentDraftId || id("draft");
+    const record: ExportRecord = {
+      id: id("export"),
+      draftId,
+      exportType: getExportType(name, blob.type || "application/octet-stream"),
+      filename: name,
+      contentType: blob.type || "application/octet-stream",
+      sizeBytes: blob.size,
+      metadata: {
+        activeTab: displayedActiveTab,
+        activeVersionId: activeVersionId || versions[0]?.id || null,
+        generationSource: generationMeta?.generationSource || null,
+        ...metadata,
       },
       createdAt: new Date().toISOString(),
     };
@@ -1917,6 +2073,8 @@ export default function PodCreativeBuilder() {
                         selectedConcepts={selectedConcepts}
                         artworkAssets={artworkAssets}
                         onDownload={download}
+                        onExportZip={exportTeeinblueZip}
+                        onSyncPackage={syncTeeinbluePackages}
                       />
                     )}
                     {displayedActiveTab === "Component Prompts" && (
@@ -2006,6 +2164,11 @@ function DashboardView({
   const highOpportunityDrafts = visibleDrafts.filter((draft) => (draft.opportunityScore?.overall || 0) >= 7.5);
   const promptReadyDrafts = visibleDrafts.filter((draft) => (draft.artworkAssets?.length || 0) > 0 || draft.status === "prompt-ready" || (draft.componentPromptPacks && Object.keys(draft.componentPromptPacks).length > 0));
   const exportedDrafts = visibleDrafts.filter((draft) => draft.status === "exported");
+  const assetsReadyCount = visibleDrafts.reduce((total, draft) => total + (draft.artworkAssets || []).filter((asset) => asset.status === "Uploaded" || asset.status === "Approved").length, 0);
+  const teeinbluePackageCount = visibleDrafts.reduce(
+    (total, draft) => total + (draft.exportRecords || []).filter((record) => record.filename.endsWith(".zip") || record.metadata?.packageType === "teeinblue").length,
+    0,
+  );
   const statusOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.status))).sort();
   const productOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.productType).filter(Boolean))).sort();
   const occasionOptions = Array.from(new Set(visibleDrafts.map((draft) => draft.occasion).filter(Boolean))).sort();
@@ -2052,12 +2215,14 @@ function DashboardView({
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-7">
         {[
           ["Recent Drafts", visibleDrafts.length],
           ["Recent Generations", generatedDrafts.length],
           ["High Opportunity", highOpportunityDrafts.length],
           ["Prompt Ready", promptReadyDrafts.length],
+          ["Assets Ready", assetsReadyCount],
+          ["Teeinblue Packages", teeinbluePackageCount],
           ["Exports", exportedDrafts.length],
         ].map(([label, value]) => (
           <div key={label} className="rounded-xl border border-border bg-white p-4">
@@ -3456,11 +3621,15 @@ function TeeinbluePackageTab({
   selectedConcepts,
   artworkAssets,
   onDownload,
+  onExportZip,
+  onSyncPackage,
 }: {
   project: Project;
   selectedConcepts: Concept[];
   artworkAssets: ArtworkAsset[];
   onDownload: (name: string, value: string, type: string) => void;
+  onExportZip: (concept: Concept) => void;
+  onSyncPackage: (concept?: Concept) => void;
 }) {
   if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to build a Teeinblue package.</p>;
 
@@ -3470,6 +3639,12 @@ function TeeinbluePackageTab({
         eyebrow="Teeinblue Package"
         title="Design package planning"
         description="Turn approved artwork prompts and uploads into Teeinblue-ready slots, layout layers, manifest JSON, and a setup guide. This does not generate images or publish products."
+        action={
+          <button type="button" onClick={() => onSyncPackage()} className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-primary bg-white px-4 text-sm font-medium text-primary hover:bg-surface-muted">
+            <Upload size={16} />
+            Sync packages
+          </button>
+        }
       />
       {selectedConcepts.map((concept) => {
         const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
@@ -3499,6 +3674,14 @@ function TeeinbluePackageTab({
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => onExportZip(concept)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-medium text-white hover:bg-shade-70">
+                  <Download size={14} />
+                  Export ZIP
+                </button>
+                <button type="button" onClick={() => onSyncPackage(concept)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Upload size={14} />
+                  Sync
+                </button>
                 <button type="button" onClick={() => onDownload(`${filePrefix}-teeinblue-manifest.json`, manifestJson, "application/json")} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
                   <FileJson size={14} />
                   Manifest JSON
