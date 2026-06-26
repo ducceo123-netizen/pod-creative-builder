@@ -45,8 +45,10 @@ const PROJECT_DRAFT_KEY = "pod-builder-project-draft";
 const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
 const CURRENT_DRAFT_ID_KEY = "pod-current-draft-id";
+const DESIGNER_TASKS_KEY = "pod-designer-tasks";
 const navItems: Array<[string, LucideIcon, boolean]> = [
   ["Dashboard", Home, false],
+  ["Task Board", Bell, false],
   ["Projects", Archive, false],
   ["Competitor Briefs", Plus, false],
   ["Creative Generator", Sparkles, false],
@@ -222,7 +224,34 @@ type CreativeDraft = {
   updatedAt: string;
 };
 
-type AppView = "Dashboard" | "Product Brief" | "Settings";
+type DesignerRole = "admin" | "designer";
+type DesignerTaskStatus = "Backlog" | "Ready" | "In Progress" | "Review" | "Approved" | "Needs Revision" | "Done";
+type DesignerTaskPriority = "Urgent" | "High" | "Normal" | "Low";
+type DesignerTaskType = "Design Asset" | "Mockup" | "Teeinblue Setup" | "Shopify Listing" | "Meta Ad" | "QA";
+
+type DesignerTask = {
+  id: string;
+  title: string;
+  brief: string;
+  taskType: DesignerTaskType;
+  status: DesignerTaskStatus;
+  priority: DesignerTaskPriority;
+  assignee: string;
+  createdBy: string;
+  draftId?: string | null;
+  draftTitle?: string;
+  conceptName?: string;
+  assetName?: string;
+  dueDate?: string;
+  assetUrl?: string;
+  designerNote?: string;
+  reviewNote?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+};
+
+type AppView = "Dashboard" | "Task Board" | "Product Brief" | "Settings";
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -291,12 +320,37 @@ function writeDrafts(drafts: CreativeDraft[]) {
   localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
 }
 
+function readDesignerTasks(): DesignerTask[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(DESIGNER_TASKS_KEY) || "[]") as DesignerTask[];
+  } catch {
+    localStorage.removeItem(DESIGNER_TASKS_KEY);
+    return [];
+  }
+}
+
+function writeDesignerTasks(tasks: DesignerTask[]) {
+  localStorage.setItem(DESIGNER_TASKS_KEY, JSON.stringify(tasks));
+}
+
 async function fetchRemoteDrafts(): Promise<CreativeDraft[] | null> {
   try {
     const response = await fetch("/api/drafts", { cache: "no-store" });
     if (!response.ok) return null;
     const data = (await response.json()) as { source?: string; drafts?: CreativeDraft[] };
     return data.source === "supabase" ? data.drafts || [] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchRemoteDesignerTasks(): Promise<DesignerTask[] | null> {
+  try {
+    const response = await fetch("/api/designer-tasks", { cache: "no-store" });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { source?: string; tasks?: DesignerTask[] };
+    return data.source === "supabase" ? data.tasks || [] : null;
   } catch {
     return null;
   }
@@ -311,6 +365,18 @@ async function saveRemoteDraft(draft: CreativeDraft) {
     });
   } catch {
     // LocalStorage remains the offline fallback.
+  }
+}
+
+async function saveRemoteDesignerTasks(tasks: DesignerTask[]) {
+  try {
+    await fetch("/api/designer-tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tasks }),
+    });
+  } catch {
+    // LocalStorage remains the offline task fallback.
   }
 }
 
@@ -1131,6 +1197,9 @@ export default function PodCreativeBuilder() {
     }
   });
   const [drafts, setDrafts] = useState<CreativeDraft[]>(() => readDrafts());
+  const [designerTasks, setDesignerTasks] = useState<DesignerTask[]>(() => readDesignerTasks());
+  const [designerRole, setDesignerRole] = useState<DesignerRole>("admin");
+  const [activeDesigner, setActiveDesigner] = useState("Designer 1");
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(() => (typeof window === "undefined" ? null : localStorage.getItem(CURRENT_DRAFT_ID_KEY)));
   const [analysis, setAnalysis] = useState<Analysis | null>(() => getCurrentDraft()?.analysis || null);
   const [concepts, setConcepts] = useState<Concept[]>(() => getCurrentDraft()?.concepts || []);
@@ -1287,6 +1356,11 @@ ${base}
       setDrafts(remoteDrafts);
       writeDrafts(remoteDrafts);
       setDraftSyncStatus("Supabase workspace");
+      const remoteTasks = await fetchRemoteDesignerTasks();
+      if (!cancelled && remoteTasks) {
+        setDesignerTasks(remoteTasks);
+        writeDesignerTasks(remoteTasks);
+      }
     })();
     return () => {
       cancelled = true;
@@ -2367,6 +2441,10 @@ ${base}
       setActiveView("Dashboard");
       return;
     }
+    if (label === "Task Board") {
+      setActiveView("Task Board");
+      return;
+    }
     if (label === "Settings") {
       void openSettings();
       return;
@@ -2384,11 +2462,68 @@ ${base}
 
   const isNavActive = (label: string) => {
     if (label === "Dashboard" || label === "Projects" || label === "Drafts") return activeView === "Dashboard";
+    if (label === "Task Board") return activeView === "Task Board";
     if (label === "Competitor Briefs" || label === "Creative Generator") return activeView === "Product Brief";
     if (label === "Prompt Library") return activeView === "Product Brief" && displayedActiveTab === "Component Prompts";
     if (label === "Exports") return activeView === "Product Brief" && displayedActiveTab === "Export";
     if (label === "Settings") return activeView === "Settings";
     return false;
+  };
+
+  const persistDesignerTasks = (nextTasks: DesignerTask[]) => {
+    setDesignerTasks(nextTasks);
+    writeDesignerTasks(nextTasks);
+    void saveRemoteDesignerTasks(nextTasks);
+  };
+
+  const createDesignerTask = (task: Omit<DesignerTask, "id" | "createdAt" | "updatedAt" | "createdBy" | "status"> & { status?: DesignerTaskStatus }) => {
+    const now = new Date().toISOString();
+    const nextTask: DesignerTask = {
+      ...task,
+      id: id("task"),
+      status: task.status || "Ready",
+      createdBy: "Admin",
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+    };
+    persistDesignerTasks([nextTask, ...designerTasks]);
+    setToast("Task assigned");
+    window.setTimeout(() => setToast(""), 1400);
+  };
+
+  const updateDesignerTask = (taskId: string, patch: Partial<DesignerTask>) => {
+    const now = new Date().toISOString();
+    const nextTasks = designerTasks.map((task) =>
+      task.id === taskId
+        ? {
+            ...task,
+            ...patch,
+            updatedAt: now,
+            completedAt: patch.status === "Done" || patch.status === "Approved" ? now : patch.status ? null : task.completedAt,
+          }
+        : task,
+    );
+    persistDesignerTasks(nextTasks);
+  };
+
+  const deleteDesignerTask = (taskId: string) => {
+    persistDesignerTasks(designerTasks.filter((task) => task.id !== taskId));
+    setToast("Task deleted");
+    window.setTimeout(() => setToast(""), 1400);
+  };
+
+  const openTaskDraft = (task: DesignerTask) => {
+    const draft = task.draftId ? drafts.find((item) => item.id === task.draftId) : null;
+    if (!draft) {
+      setToast("Linked draft not found");
+      window.setTimeout(() => setToast(""), 1400);
+      return;
+    }
+    loadDraft(draft);
+    if (task.taskType === "Teeinblue Setup") setActiveTab("Teeinblue Package");
+    else if (task.taskType === "Shopify Listing" || task.taskType === "Meta Ad") setActiveTab("Copy");
+    else setActiveTab("Artwork Assets");
   };
 
   const useSampleBrief = () => {
@@ -2494,6 +2629,19 @@ ${base}
                 onDuplicate={duplicateDraft}
                 onArchive={archiveDraft}
                 onDelete={deleteDraft}
+              />
+            ) : activeView === "Task Board" ? (
+              <TaskBoardView
+                tasks={designerTasks}
+                drafts={drafts}
+                role={designerRole}
+                activeDesigner={activeDesigner}
+                onRoleChange={setDesignerRole}
+                onDesignerChange={setActiveDesigner}
+                onCreate={createDesignerTask}
+                onUpdate={updateDesignerTask}
+                onDelete={deleteDesignerTask}
+                onOpenDraft={openTaskDraft}
               />
             ) : activeView === "Settings" ? (
               <SettingsView health={health} generationMeta={generationMeta} onRefresh={openSettings} />
@@ -2711,6 +2859,189 @@ ${base}
       </div>
       {toast ? <div className="fixed bottom-5 right-5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-soft">{toast}</div> : null}
     </main>
+  );
+}
+
+function TaskBoardView({
+  tasks,
+  drafts,
+  role,
+  activeDesigner,
+  onRoleChange,
+  onDesignerChange,
+  onCreate,
+  onUpdate,
+  onDelete,
+  onOpenDraft,
+}: {
+  tasks: DesignerTask[];
+  drafts: CreativeDraft[];
+  role: DesignerRole;
+  activeDesigner: string;
+  onRoleChange: (role: DesignerRole) => void;
+  onDesignerChange: (designer: string) => void;
+  onCreate: (task: Omit<DesignerTask, "id" | "createdAt" | "updatedAt" | "createdBy" | "status"> & { status?: DesignerTaskStatus }) => void;
+  onUpdate: (taskId: string, patch: Partial<DesignerTask>) => void;
+  onDelete: (taskId: string) => void;
+  onOpenDraft: (task: DesignerTask) => void;
+}) {
+  const designerOptions = Array.from(new Set(["Designer 1", "Designer 2", "Designer 3", ...tasks.map((task) => task.assignee).filter(Boolean)])).sort();
+  const [form, setForm] = useState({
+    title: "",
+    brief: "",
+    taskType: "Design Asset" as DesignerTaskType,
+    priority: "Normal" as DesignerTaskPriority,
+    assignee: activeDesigner || designerOptions[0] || "Designer 1",
+    draftId: "",
+    conceptName: "",
+    assetName: "",
+    dueDate: "",
+  });
+  const visibleTasks = role === "admin" ? tasks : tasks.filter((task) => task.assignee === activeDesigner);
+  const openTasks = visibleTasks.filter((task) => task.status !== "Done" && task.status !== "Approved");
+  const reviewTasks = visibleTasks.filter((task) => task.status === "Review" || task.status === "Needs Revision");
+  const doneTasks = visibleTasks.filter((task) => task.status === "Done" || task.status === "Approved");
+  const statuses: DesignerTaskStatus[] = ["Ready", "In Progress", "Review", "Needs Revision", "Approved", "Done"];
+
+  const selectedDraft = drafts.find((draft) => draft.id === form.draftId);
+  const createTask = () => {
+    if (!form.title.trim()) return;
+    onCreate({
+      title: form.title.trim(),
+      brief: form.brief.trim() || "Prepare the requested design deliverable and update status when ready for review.",
+      taskType: form.taskType,
+      priority: form.priority,
+      assignee: form.assignee || activeDesigner || "Designer 1",
+      draftId: selectedDraft?.id || null,
+      draftTitle: selectedDraft?.title,
+      conceptName: form.conceptName.trim(),
+      assetName: form.assetName.trim(),
+      dueDate: form.dueDate,
+      assetUrl: "",
+      designerNote: "",
+      reviewNote: "",
+    });
+    setForm((current) => ({ ...current, title: "", brief: "", conceptName: "", assetName: "" }));
+  };
+
+  return (
+    <section className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.06em] text-secondary">Operations</p>
+          <h1 className="mt-2 text-[28px] font-semibold">Designer Task Board</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Admin assigns production work. Designers see their queue, update progress, and send work back for review.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <div className="inline-flex rounded-lg border border-border bg-white p-1">
+            {(["admin", "designer"] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => onRoleChange(item)}
+                className={cx("h-9 rounded-md px-3 text-sm font-semibold capitalize", role === item ? "bg-primary text-white" : "text-secondary hover:bg-surface-muted")}
+              >
+                {item === "admin" ? "Admin" : "Designer"}
+              </button>
+            ))}
+          </div>
+          <select value={activeDesigner} onChange={(event) => onDesignerChange(event.target.value)} className="focus-ring h-11 rounded-lg border border-border bg-white px-3 text-sm font-medium text-primary">
+            {designerOptions.map((designer) => <option key={designer} value={designer}>{designer}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <InfoCard title="Visible tasks" value={`${visibleTasks.length}`} />
+        <InfoCard title="Open" value={`${openTasks.length}`} />
+        <InfoCard title="Needs review" value={`${reviewTasks.length}`} />
+        <InfoCard title="Done" value={`${doneTasks.length}`} />
+      </div>
+
+      {role === "admin" ? (
+        <div className="rounded-xl border border-border bg-white p-5">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-secondary">Admin assignment</p>
+              <h2 className="mt-1 text-lg font-semibold">Create designer task</h2>
+            </div>
+            <span className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-success">You are highest admin</span>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-4">
+            <input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Task title" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary lg:col-span-2" />
+            <select value={form.assignee} onChange={(event) => setForm({ ...form, assignee: event.target.value })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+              {designerOptions.map((designer) => <option key={designer} value={designer}>{designer}</option>)}
+            </select>
+            <select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value as DesignerTaskPriority })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+              {(["Urgent", "High", "Normal", "Low"] as const).map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select value={form.taskType} onChange={(event) => setForm({ ...form, taskType: event.target.value as DesignerTaskType })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+              {(["Design Asset", "Mockup", "Teeinblue Setup", "Shopify Listing", "Meta Ad", "QA"] as const).map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select value={form.draftId} onChange={(event) => setForm({ ...form, draftId: event.target.value })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary lg:col-span-2">
+              <option value="">No linked draft</option>
+              {drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.title}</option>)}
+            </select>
+            <input type="date" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary" />
+            <input value={form.conceptName} onChange={(event) => setForm({ ...form, conceptName: event.target.value })} placeholder="Concept name" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary" />
+            <input value={form.assetName} onChange={(event) => setForm({ ...form, assetName: event.target.value })} placeholder="Asset / deliverable" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary" />
+            <textarea value={form.brief} onChange={(event) => setForm({ ...form, brief: event.target.value })} placeholder="Designer instructions, acceptance criteria, file naming, size, notes..." className="focus-ring min-h-24 rounded-lg border border-border bg-white px-3 py-2 text-sm text-primary lg:col-span-3" />
+            <button type="button" onClick={createTask} className="focus-ring h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">Assign Task</button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {statuses.map((status) => {
+          const columnTasks = visibleTasks.filter((task) => task.status === status);
+          return (
+            <section key={status} className="rounded-xl border border-border bg-surface-muted p-3">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">{status}</h3>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-secondary">{columnTasks.length}</span>
+              </div>
+              <div className="mt-3 space-y-3">
+                {columnTasks.length ? columnTasks.map((task) => (
+                  <article key={task.id} className="rounded-xl border border-border bg-white p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h4 className="font-semibold text-primary">{task.title}</h4>
+                        <p className="mt-1 text-xs text-secondary">{task.taskType} · {task.assignee}</p>
+                      </div>
+                      <span className={cx("rounded-full px-2.5 py-1 text-xs font-semibold", task.priority === "Urgent" || task.priority === "High" ? "bg-amber-50 text-warning" : "bg-surface-muted text-secondary")}>{task.priority}</span>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-secondary">{task.brief}</p>
+                    <dl className="mt-3 grid gap-1 text-xs text-secondary">
+                      {task.draftTitle ? <Detail label="Draft" value={task.draftTitle} /> : null}
+                      {task.conceptName ? <Detail label="Concept" value={task.conceptName} /> : null}
+                      {task.assetName ? <Detail label="Asset" value={task.assetName} /> : null}
+                      {task.dueDate ? <Detail label="Due" value={task.dueDate} /> : null}
+                    </dl>
+                    <div className="mt-3 grid gap-2">
+                      <select value={task.status} onChange={(event) => onUpdate(task.id, { status: event.target.value as DesignerTaskStatus })} className="focus-ring h-9 rounded-lg border border-border bg-white px-3 text-xs font-medium text-primary">
+                        {statuses.map((item) => <option key={item} value={item}>{item}</option>)}
+                      </select>
+                      <input value={task.assetUrl || ""} onChange={(event) => onUpdate(task.id, { assetUrl: event.target.value })} placeholder="Asset/file URL" className="focus-ring h-9 rounded-lg border border-border bg-white px-3 text-xs text-primary" />
+                      <textarea value={task.designerNote || ""} onChange={(event) => onUpdate(task.id, { designerNote: event.target.value })} placeholder="Designer note / revision update" className="focus-ring min-h-16 rounded-lg border border-border bg-white px-3 py-2 text-xs text-primary" />
+                      {role === "admin" ? (
+                        <textarea value={task.reviewNote || ""} onChange={(event) => onUpdate(task.id, { reviewNote: event.target.value })} placeholder="Admin review note" className="focus-ring min-h-16 rounded-lg border border-border bg-white px-3 py-2 text-xs text-primary" />
+                      ) : null}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {task.draftId ? <button type="button" onClick={() => onOpenDraft(task)} className="focus-ring h-8 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">Open Draft</button> : null}
+                      {task.assetUrl ? <a href={task.assetUrl} target="_blank" rel="noreferrer" className="focus-ring inline-flex h-8 items-center rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">Open Asset</a> : null}
+                      {role === "admin" ? <button type="button" onClick={() => onDelete(task.id)} className="focus-ring h-8 rounded-lg border border-border bg-white px-3 text-xs font-medium text-danger hover:bg-red-50">Delete</button> : null}
+                    </div>
+                  </article>
+                )) : (
+                  <div className="rounded-lg border border-dashed border-border bg-white p-4 text-sm text-secondary">No tasks in this stage.</div>
+                )}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

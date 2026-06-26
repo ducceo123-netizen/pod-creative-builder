@@ -64,6 +64,21 @@ create table if not exists public.integration_runs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.designer_tasks (
+  id text primary key,
+  title text not null,
+  status text not null default 'Ready',
+  priority text not null default 'Normal',
+  assignee text not null,
+  task_type text not null,
+  draft_id text references public.creative_drafts(id) on delete set null,
+  due_date date,
+  task jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
 create table if not exists public.artwork_assets (
   id text primary key,
   draft_id text references public.creative_drafts(id) on delete cascade,
@@ -184,6 +199,10 @@ create index if not exists export_records_export_type_idx on public.export_recor
 create index if not exists integration_runs_draft_id_idx on public.integration_runs (draft_id, created_at desc);
 create index if not exists integration_runs_type_idx on public.integration_runs (integration_type, created_at desc);
 create index if not exists integration_runs_status_idx on public.integration_runs (status);
+create index if not exists designer_tasks_updated_at_idx on public.designer_tasks (updated_at desc);
+create index if not exists designer_tasks_status_idx on public.designer_tasks (status);
+create index if not exists designer_tasks_assignee_idx on public.designer_tasks (assignee, status);
+create index if not exists designer_tasks_draft_id_idx on public.designer_tasks (draft_id, updated_at desc);
 create index if not exists artwork_assets_draft_id_idx on public.artwork_assets (draft_id, updated_at desc);
 create index if not exists artwork_assets_concept_id_idx on public.artwork_assets (concept_id);
 create index if not exists artwork_assets_status_idx on public.artwork_assets (status);
@@ -212,6 +231,7 @@ $$;
 
 drop trigger if exists set_creative_drafts_updated_at on public.creative_drafts;
 drop trigger if exists set_artwork_assets_updated_at on public.artwork_assets;
+drop trigger if exists set_designer_tasks_updated_at on public.designer_tasks;
 drop trigger if exists set_component_asset_workflow_updated_at on public.component_asset_workflow;
 drop trigger if exists set_asset_slots_updated_at on public.asset_slots;
 drop trigger if exists set_uploaded_assets_updated_at on public.uploaded_assets;
@@ -225,6 +245,11 @@ execute function public.set_updated_at();
 
 create trigger set_artwork_assets_updated_at
 before update on public.artwork_assets
+for each row
+execute function public.set_updated_at();
+
+create trigger set_designer_tasks_updated_at
+before update on public.designer_tasks
 for each row
 execute function public.set_updated_at();
 
@@ -257,6 +282,7 @@ alter table public.creative_drafts enable row level security;
 alter table public.generation_versions enable row level security;
 alter table public.export_records enable row level security;
 alter table public.integration_runs enable row level security;
+alter table public.designer_tasks enable row level security;
 alter table public.artwork_assets enable row level security;
 alter table public.component_asset_workflow enable row level security;
 alter table public.asset_slots enable row level security;
