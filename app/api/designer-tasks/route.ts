@@ -8,6 +8,7 @@ type DesignerTask = {
   taskType: string;
   status: string;
   priority: string;
+  assigneeId?: string;
   assignee: string;
   createdBy: string;
   draftId?: string | null;
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
       title: task.title,
       status: task.status,
       priority: task.priority,
+      assignee_id: task.assigneeId || null,
       assignee: task.assignee,
       task_type: task.taskType,
       draft_id: task.draftId || null,

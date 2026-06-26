@@ -64,11 +64,24 @@ create table if not exists public.integration_runs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.workspace_accounts (
+  id text primary key,
+  name text not null,
+  email text not null,
+  role text not null default 'designer',
+  status text not null default 'active',
+  title text,
+  account jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.designer_tasks (
   id text primary key,
   title text not null,
   status text not null default 'Ready',
   priority text not null default 'Normal',
+  assignee_id text references public.workspace_accounts(id) on delete set null,
   assignee text not null,
   task_type text not null,
   draft_id text references public.creative_drafts(id) on delete set null,
@@ -78,6 +91,31 @@ create table if not exists public.designer_tasks (
   updated_at timestamptz not null default now(),
   completed_at timestamptz
 );
+
+alter table public.designer_tasks
+add column if not exists assignee_id text references public.workspace_accounts(id) on delete set null;
+
+insert into public.workspace_accounts (id, name, email, role, status, title, account)
+values
+  (
+    'admin-owner',
+    'Admin Owner',
+    'admin@pod.local',
+    'admin',
+    'active',
+    'Highest Admin',
+    '{"id":"admin-owner","name":"Admin Owner","email":"admin@pod.local","role":"admin","status":"active","title":"Highest Admin","createdAt":"2026-06-27T00:00:00.000Z","updatedAt":"2026-06-27T00:00:00.000Z"}'::jsonb
+  ),
+  (
+    'designer-1',
+    'Designer 1',
+    'designer1@pod.local',
+    'designer',
+    'active',
+    'Designer',
+    '{"id":"designer-1","name":"Designer 1","email":"designer1@pod.local","role":"designer","status":"active","title":"Designer","createdAt":"2026-06-27T00:00:00.000Z","updatedAt":"2026-06-27T00:00:00.000Z"}'::jsonb
+  )
+on conflict (id) do nothing;
 
 create table if not exists public.artwork_assets (
   id text primary key,
@@ -199,8 +237,11 @@ create index if not exists export_records_export_type_idx on public.export_recor
 create index if not exists integration_runs_draft_id_idx on public.integration_runs (draft_id, created_at desc);
 create index if not exists integration_runs_type_idx on public.integration_runs (integration_type, created_at desc);
 create index if not exists integration_runs_status_idx on public.integration_runs (status);
+create index if not exists workspace_accounts_role_idx on public.workspace_accounts (role, status);
+create index if not exists workspace_accounts_email_idx on public.workspace_accounts (email);
 create index if not exists designer_tasks_updated_at_idx on public.designer_tasks (updated_at desc);
 create index if not exists designer_tasks_status_idx on public.designer_tasks (status);
+create index if not exists designer_tasks_assignee_id_idx on public.designer_tasks (assignee_id, status);
 create index if not exists designer_tasks_assignee_idx on public.designer_tasks (assignee, status);
 create index if not exists designer_tasks_draft_id_idx on public.designer_tasks (draft_id, updated_at desc);
 create index if not exists artwork_assets_draft_id_idx on public.artwork_assets (draft_id, updated_at desc);
@@ -230,6 +271,7 @@ end;
 $$;
 
 drop trigger if exists set_creative_drafts_updated_at on public.creative_drafts;
+drop trigger if exists set_workspace_accounts_updated_at on public.workspace_accounts;
 drop trigger if exists set_artwork_assets_updated_at on public.artwork_assets;
 drop trigger if exists set_designer_tasks_updated_at on public.designer_tasks;
 drop trigger if exists set_component_asset_workflow_updated_at on public.component_asset_workflow;
@@ -240,6 +282,11 @@ drop trigger if exists set_design_layer_plans_updated_at on public.design_layer_
 
 create trigger set_creative_drafts_updated_at
 before update on public.creative_drafts
+for each row
+execute function public.set_updated_at();
+
+create trigger set_workspace_accounts_updated_at
+before update on public.workspace_accounts
 for each row
 execute function public.set_updated_at();
 
@@ -282,6 +329,7 @@ alter table public.creative_drafts enable row level security;
 alter table public.generation_versions enable row level security;
 alter table public.export_records enable row level security;
 alter table public.integration_runs enable row level security;
+alter table public.workspace_accounts enable row level security;
 alter table public.designer_tasks enable row level security;
 alter table public.artwork_assets enable row level security;
 alter table public.component_asset_workflow enable row level security;

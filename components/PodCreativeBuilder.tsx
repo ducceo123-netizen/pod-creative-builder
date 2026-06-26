@@ -46,6 +46,8 @@ const SCREENSHOT_DRAFT_KEY = "pod-builder-screenshot-draft";
 const DRAFTS_KEY = "pod-creative-drafts";
 const CURRENT_DRAFT_ID_KEY = "pod-current-draft-id";
 const DESIGNER_TASKS_KEY = "pod-designer-tasks";
+const WORKSPACE_ACCOUNTS_KEY = "pod-workspace-accounts";
+const ACTIVE_ACCOUNT_ID_KEY = "pod-active-account-id";
 const navItems: Array<[string, LucideIcon, boolean]> = [
   ["Dashboard", Home, false],
   ["Task Board", Bell, false],
@@ -225,6 +227,19 @@ type CreativeDraft = {
 };
 
 type DesignerRole = "admin" | "designer";
+type WorkspaceAccountStatus = "active" | "inactive";
+
+type WorkspaceAccount = {
+  id: string;
+  name: string;
+  email: string;
+  role: DesignerRole;
+  status: WorkspaceAccountStatus;
+  title?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type DesignerTaskStatus = "Backlog" | "Ready" | "In Progress" | "Review" | "Approved" | "Needs Revision" | "Done";
 type DesignerTaskPriority = "Urgent" | "High" | "Normal" | "Low";
 type DesignerTaskType = "Design Asset" | "Mockup" | "Teeinblue Setup" | "Shopify Listing" | "Meta Ad" | "QA";
@@ -236,6 +251,7 @@ type DesignerTask = {
   taskType: DesignerTaskType;
   status: DesignerTaskStatus;
   priority: DesignerTaskPriority;
+  assigneeId?: string;
   assignee: string;
   createdBy: string;
   draftId?: string | null;
@@ -306,6 +322,32 @@ function id(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function defaultWorkspaceAccounts(): WorkspaceAccount[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "admin-owner",
+      name: "Admin Owner",
+      email: "admin@pod.local",
+      role: "admin",
+      status: "active",
+      title: "Highest Admin",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "designer-1",
+      name: "Designer 1",
+      email: "designer1@pod.local",
+      role: "designer",
+      status: "active",
+      title: "Designer",
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+}
+
 function readDrafts(): CreativeDraft[] {
   if (typeof window === "undefined") return [];
   try {
@@ -318,6 +360,21 @@ function readDrafts(): CreativeDraft[] {
 
 function writeDrafts(drafts: CreativeDraft[]) {
   localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+function readWorkspaceAccounts(): WorkspaceAccount[] {
+  if (typeof window === "undefined") return defaultWorkspaceAccounts();
+  try {
+    const accounts = JSON.parse(localStorage.getItem(WORKSPACE_ACCOUNTS_KEY) || "[]") as WorkspaceAccount[];
+    return accounts.length ? accounts : defaultWorkspaceAccounts();
+  } catch {
+    localStorage.removeItem(WORKSPACE_ACCOUNTS_KEY);
+    return defaultWorkspaceAccounts();
+  }
+}
+
+function writeWorkspaceAccounts(accounts: WorkspaceAccount[]) {
+  localStorage.setItem(WORKSPACE_ACCOUNTS_KEY, JSON.stringify(accounts));
 }
 
 function readDesignerTasks(): DesignerTask[] {
@@ -356,6 +413,17 @@ async function fetchRemoteDesignerTasks(): Promise<DesignerTask[] | null> {
   }
 }
 
+async function fetchRemoteWorkspaceAccounts(): Promise<WorkspaceAccount[] | null> {
+  try {
+    const response = await fetch("/api/workspace-accounts", { cache: "no-store" });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { source?: string; accounts?: WorkspaceAccount[] };
+    return data.source === "supabase" ? data.accounts || [] : null;
+  } catch {
+    return null;
+  }
+}
+
 async function saveRemoteDraft(draft: CreativeDraft) {
   try {
     await fetch("/api/drafts", {
@@ -365,6 +433,18 @@ async function saveRemoteDraft(draft: CreativeDraft) {
     });
   } catch {
     // LocalStorage remains the offline fallback.
+  }
+}
+
+async function saveRemoteWorkspaceAccounts(accounts: WorkspaceAccount[]) {
+  try {
+    await fetch("/api/workspace-accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accounts }),
+    });
+  } catch {
+    // LocalStorage remains the offline account fallback.
   }
 }
 
@@ -1197,9 +1277,12 @@ export default function PodCreativeBuilder() {
     }
   });
   const [drafts, setDrafts] = useState<CreativeDraft[]>(() => readDrafts());
+  const [workspaceAccounts, setWorkspaceAccounts] = useState<WorkspaceAccount[]>(() => readWorkspaceAccounts());
+  const [activeAccountId, setActiveAccountId] = useState<string>(() => {
+    if (typeof window === "undefined") return "admin-owner";
+    return localStorage.getItem(ACTIVE_ACCOUNT_ID_KEY) || "admin-owner";
+  });
   const [designerTasks, setDesignerTasks] = useState<DesignerTask[]>(() => readDesignerTasks());
-  const [designerRole, setDesignerRole] = useState<DesignerRole>("admin");
-  const [activeDesigner, setActiveDesigner] = useState("Designer 1");
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(() => (typeof window === "undefined" ? null : localStorage.getItem(CURRENT_DRAFT_ID_KEY)));
   const [analysis, setAnalysis] = useState<Analysis | null>(() => getCurrentDraft()?.analysis || null);
   const [concepts, setConcepts] = useState<Concept[]>(() => getCurrentDraft()?.concepts || []);
@@ -1252,6 +1335,8 @@ export default function PodCreativeBuilder() {
   const outputRef = useRef<HTMLElement | null>(null);
 
   const selectedConcepts = useMemo(() => concepts.filter((concept) => concept.selected), [concepts]);
+  const activeAccount = workspaceAccounts.find((account) => account.id === activeAccountId) || workspaceAccounts[0] || defaultWorkspaceAccounts()[0];
+  const activeDesigners = useMemo(() => workspaceAccounts.filter((account) => account.role === "designer" && account.status === "active"), [workspaceAccounts]);
   const outputFlags = useMemo(() => getOutputFlags(project), [project]);
   const visibleTabs = useMemo(
     () =>
@@ -1361,11 +1446,20 @@ ${base}
         setDesignerTasks(remoteTasks);
         writeDesignerTasks(remoteTasks);
       }
+      const remoteAccounts = await fetchRemoteWorkspaceAccounts();
+      if (!cancelled && remoteAccounts?.length) {
+        setWorkspaceAccounts(remoteAccounts);
+        writeWorkspaceAccounts(remoteAccounts);
+        if (!remoteAccounts.some((account) => account.id === activeAccountId)) {
+          setActiveAccountId(remoteAccounts[0].id);
+          localStorage.setItem(ACTIVE_ACCOUNT_ID_KEY, remoteAccounts[0].id);
+        }
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeAccountId]);
 
   const updateProject = <K extends keyof Project>(key: K, value: Project[K]) => {
     setProject((current) => ({ ...current, [key]: value, updatedAt: new Date().toISOString() }));
@@ -2476,13 +2570,48 @@ ${base}
     void saveRemoteDesignerTasks(nextTasks);
   };
 
+  const persistWorkspaceAccounts = (nextAccounts: WorkspaceAccount[]) => {
+    setWorkspaceAccounts(nextAccounts);
+    writeWorkspaceAccounts(nextAccounts);
+    void saveRemoteWorkspaceAccounts(nextAccounts);
+  };
+
+  const switchAccount = (accountId: string) => {
+    setActiveAccountId(accountId);
+    localStorage.setItem(ACTIVE_ACCOUNT_ID_KEY, accountId);
+  };
+
+  const createWorkspaceAccount = (account: Omit<WorkspaceAccount, "id" | "createdAt" | "updatedAt" | "status"> & { status?: WorkspaceAccountStatus }) => {
+    const now = new Date().toISOString();
+    const nextAccount: WorkspaceAccount = {
+      ...account,
+      id: id("account"),
+      status: account.status || "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+    persistWorkspaceAccounts([...workspaceAccounts, nextAccount]);
+    setToast("Account created");
+    window.setTimeout(() => setToast(""), 1400);
+  };
+
+  const updateWorkspaceAccount = (accountId: string, patch: Partial<WorkspaceAccount>) => {
+    const now = new Date().toISOString();
+    const nextAccounts = workspaceAccounts.map((account) => (account.id === accountId ? { ...account, ...patch, updatedAt: now } : account));
+    persistWorkspaceAccounts(nextAccounts);
+    if (patch.status === "inactive" && activeAccountId === accountId) {
+      const fallback = nextAccounts.find((account) => account.status === "active") || nextAccounts[0];
+      if (fallback) switchAccount(fallback.id);
+    }
+  };
+
   const createDesignerTask = (task: Omit<DesignerTask, "id" | "createdAt" | "updatedAt" | "createdBy" | "status"> & { status?: DesignerTaskStatus }) => {
     const now = new Date().toISOString();
     const nextTask: DesignerTask = {
       ...task,
       id: id("task"),
       status: task.status || "Ready",
-      createdBy: "Admin",
+      createdBy: activeAccount.name,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -2634,10 +2763,12 @@ ${base}
               <TaskBoardView
                 tasks={designerTasks}
                 drafts={drafts}
-                role={designerRole}
-                activeDesigner={activeDesigner}
-                onRoleChange={setDesignerRole}
-                onDesignerChange={setActiveDesigner}
+                accounts={workspaceAccounts}
+                activeAccount={activeAccount}
+                activeDesigners={activeDesigners}
+                onSwitchAccount={switchAccount}
+                onCreateAccount={createWorkspaceAccount}
+                onUpdateAccount={updateWorkspaceAccount}
                 onCreate={createDesignerTask}
                 onUpdate={updateDesignerTask}
                 onDelete={deleteDesignerTask}
@@ -2865,10 +2996,12 @@ ${base}
 function TaskBoardView({
   tasks,
   drafts,
-  role,
-  activeDesigner,
-  onRoleChange,
-  onDesignerChange,
+  accounts,
+  activeAccount,
+  activeDesigners,
+  onSwitchAccount,
+  onCreateAccount,
+  onUpdateAccount,
   onCreate,
   onUpdate,
   onDelete,
@@ -2876,34 +3009,38 @@ function TaskBoardView({
 }: {
   tasks: DesignerTask[];
   drafts: CreativeDraft[];
-  role: DesignerRole;
-  activeDesigner: string;
-  onRoleChange: (role: DesignerRole) => void;
-  onDesignerChange: (designer: string) => void;
+  accounts: WorkspaceAccount[];
+  activeAccount: WorkspaceAccount;
+  activeDesigners: WorkspaceAccount[];
+  onSwitchAccount: (accountId: string) => void;
+  onCreateAccount: (account: Omit<WorkspaceAccount, "id" | "createdAt" | "updatedAt" | "status"> & { status?: WorkspaceAccountStatus }) => void;
+  onUpdateAccount: (accountId: string, patch: Partial<WorkspaceAccount>) => void;
   onCreate: (task: Omit<DesignerTask, "id" | "createdAt" | "updatedAt" | "createdBy" | "status"> & { status?: DesignerTaskStatus }) => void;
   onUpdate: (taskId: string, patch: Partial<DesignerTask>) => void;
   onDelete: (taskId: string) => void;
   onOpenDraft: (task: DesignerTask) => void;
 }) {
-  const designerOptions = Array.from(new Set(["Designer 1", "Designer 2", "Designer 3", ...tasks.map((task) => task.assignee).filter(Boolean)])).sort();
+  const isAdmin = activeAccount.role === "admin";
   const [form, setForm] = useState({
     title: "",
     brief: "",
     taskType: "Design Asset" as DesignerTaskType,
     priority: "Normal" as DesignerTaskPriority,
-    assignee: activeDesigner || designerOptions[0] || "Designer 1",
+    assigneeId: activeDesigners[0]?.id || "designer-1",
     draftId: "",
     conceptName: "",
     assetName: "",
     dueDate: "",
   });
-  const visibleTasks = role === "admin" ? tasks : tasks.filter((task) => task.assignee === activeDesigner);
+  const [accountForm, setAccountForm] = useState({ name: "", email: "", role: "designer" as DesignerRole, title: "" });
+  const visibleTasks = isAdmin ? tasks : tasks.filter((task) => task.assigneeId === activeAccount.id || task.assignee === activeAccount.name);
   const openTasks = visibleTasks.filter((task) => task.status !== "Done" && task.status !== "Approved");
   const reviewTasks = visibleTasks.filter((task) => task.status === "Review" || task.status === "Needs Revision");
   const doneTasks = visibleTasks.filter((task) => task.status === "Done" || task.status === "Approved");
   const statuses: DesignerTaskStatus[] = ["Ready", "In Progress", "Review", "Needs Revision", "Approved", "Done"];
 
   const selectedDraft = drafts.find((draft) => draft.id === form.draftId);
+  const selectedAssignee = accounts.find((account) => account.id === form.assigneeId) || activeDesigners[0];
   const createTask = () => {
     if (!form.title.trim()) return;
     onCreate({
@@ -2911,7 +3048,8 @@ function TaskBoardView({
       brief: form.brief.trim() || "Prepare the requested design deliverable and update status when ready for review.",
       taskType: form.taskType,
       priority: form.priority,
-      assignee: form.assignee || activeDesigner || "Designer 1",
+      assigneeId: selectedAssignee?.id,
+      assignee: selectedAssignee?.name || "Designer 1",
       draftId: selectedDraft?.id || null,
       draftTitle: selectedDraft?.title,
       conceptName: form.conceptName.trim(),
@@ -2923,6 +3061,16 @@ function TaskBoardView({
     });
     setForm((current) => ({ ...current, title: "", brief: "", conceptName: "", assetName: "" }));
   };
+  const createAccount = () => {
+    if (!accountForm.name.trim()) return;
+    onCreateAccount({
+      name: accountForm.name.trim(),
+      email: accountForm.email.trim() || `${accountForm.name.toLowerCase().replace(/[^a-z0-9]+/g, ".")}@pod.local`,
+      role: accountForm.role,
+      title: accountForm.title.trim() || (accountForm.role === "admin" ? "Admin" : "Designer"),
+    });
+    setAccountForm({ name: "", email: "", role: "designer", title: "" });
+  };
 
   return (
     <section className="space-y-6">
@@ -2933,20 +3081,10 @@ function TaskBoardView({
           <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">Admin assigns production work. Designers see their queue, update progress, and send work back for review.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <div className="inline-flex rounded-lg border border-border bg-white p-1">
-            {(["admin", "designer"] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => onRoleChange(item)}
-                className={cx("h-9 rounded-md px-3 text-sm font-semibold capitalize", role === item ? "bg-primary text-white" : "text-secondary hover:bg-surface-muted")}
-              >
-                {item === "admin" ? "Admin" : "Designer"}
-              </button>
+          <select value={activeAccount.id} onChange={(event) => onSwitchAccount(event.target.value)} className="focus-ring h-11 rounded-lg border border-border bg-white px-3 text-sm font-medium text-primary">
+            {accounts.filter((account) => account.status === "active").map((account) => (
+              <option key={account.id} value={account.id}>{account.name} · {account.role}</option>
             ))}
-          </div>
-          <select value={activeDesigner} onChange={(event) => onDesignerChange(event.target.value)} className="focus-ring h-11 rounded-lg border border-border bg-white px-3 text-sm font-medium text-primary">
-            {designerOptions.map((designer) => <option key={designer} value={designer}>{designer}</option>)}
           </select>
         </div>
       </div>
@@ -2958,7 +3096,7 @@ function TaskBoardView({
         <InfoCard title="Done" value={`${doneTasks.length}`} />
       </div>
 
-      {role === "admin" ? (
+      {isAdmin ? (
         <div className="rounded-xl border border-border bg-white p-5">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -2969,8 +3107,8 @@ function TaskBoardView({
           </div>
           <div className="mt-4 grid gap-3 lg:grid-cols-4">
             <input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Task title" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary lg:col-span-2" />
-            <select value={form.assignee} onChange={(event) => setForm({ ...form, assignee: event.target.value })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
-              {designerOptions.map((designer) => <option key={designer} value={designer}>{designer}</option>)}
+            <select value={form.assigneeId} onChange={(event) => setForm({ ...form, assigneeId: event.target.value })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+              {activeDesigners.map((designer) => <option key={designer.id} value={designer.id}>{designer.name}</option>)}
             </select>
             <select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value as DesignerTaskPriority })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
               {(["Urgent", "High", "Normal", "Low"] as const).map((item) => <option key={item} value={item}>{item}</option>)}
@@ -2987,6 +3125,47 @@ function TaskBoardView({
             <input value={form.assetName} onChange={(event) => setForm({ ...form, assetName: event.target.value })} placeholder="Asset / deliverable" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary" />
             <textarea value={form.brief} onChange={(event) => setForm({ ...form, brief: event.target.value })} placeholder="Designer instructions, acceptance criteria, file naming, size, notes..." className="focus-ring min-h-24 rounded-lg border border-border bg-white px-3 py-2 text-sm text-primary lg:col-span-3" />
             <button type="button" onClick={createTask} className="focus-ring h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">Assign Task</button>
+          </div>
+        </div>
+      ) : null}
+
+      {isAdmin ? (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="rounded-xl border border-border bg-white p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-secondary">Accounts</p>
+            <h2 className="mt-1 text-lg font-semibold">Workspace account set</h2>
+            <div className="mt-4 divide-y divide-border">
+              {accounts.map((account) => (
+                <div key={account.id} className="grid gap-3 py-3 first:pt-0 last:pb-0 md:grid-cols-[1fr_120px_120px_120px] md:items-center">
+                  <div className="min-w-0">
+                    <p className="font-medium text-primary">{account.name}</p>
+                    <p className="truncate text-xs text-secondary">{account.email} · {account.title || account.role}</p>
+                  </div>
+                  <select value={account.role} onChange={(event) => onUpdateAccount(account.id, { role: event.target.value as DesignerRole })} className="focus-ring h-9 rounded-lg border border-border bg-white px-2 text-xs text-primary">
+                    <option value="admin">admin</option>
+                    <option value="designer">designer</option>
+                  </select>
+                  <select value={account.status} onChange={(event) => onUpdateAccount(account.id, { status: event.target.value as WorkspaceAccountStatus })} className="focus-ring h-9 rounded-lg border border-border bg-white px-2 text-xs text-primary">
+                    <option value="active">active</option>
+                    <option value="inactive">inactive</option>
+                  </select>
+                  <button type="button" onClick={() => onSwitchAccount(account.id)} disabled={account.status !== "active"} className="focus-ring h-9 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted disabled:opacity-50">Use account</button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-white p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-secondary">Create account</p>
+            <div className="mt-4 grid gap-3">
+              <input value={accountForm.name} onChange={(event) => setAccountForm({ ...accountForm, name: event.target.value })} placeholder="Name" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary" />
+              <input value={accountForm.email} onChange={(event) => setAccountForm({ ...accountForm, email: event.target.value })} placeholder="Email" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary" />
+              <input value={accountForm.title} onChange={(event) => setAccountForm({ ...accountForm, title: event.target.value })} placeholder="Title / role label" className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary" />
+              <select value={accountForm.role} onChange={(event) => setAccountForm({ ...accountForm, role: event.target.value as DesignerRole })} className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary">
+                <option value="designer">designer</option>
+                <option value="admin">admin</option>
+              </select>
+              <button type="button" onClick={createAccount} className="focus-ring h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">Create Account</button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -3023,14 +3202,14 @@ function TaskBoardView({
                       </select>
                       <input value={task.assetUrl || ""} onChange={(event) => onUpdate(task.id, { assetUrl: event.target.value })} placeholder="Asset/file URL" className="focus-ring h-9 rounded-lg border border-border bg-white px-3 text-xs text-primary" />
                       <textarea value={task.designerNote || ""} onChange={(event) => onUpdate(task.id, { designerNote: event.target.value })} placeholder="Designer note / revision update" className="focus-ring min-h-16 rounded-lg border border-border bg-white px-3 py-2 text-xs text-primary" />
-                      {role === "admin" ? (
+                      {isAdmin ? (
                         <textarea value={task.reviewNote || ""} onChange={(event) => onUpdate(task.id, { reviewNote: event.target.value })} placeholder="Admin review note" className="focus-ring min-h-16 rounded-lg border border-border bg-white px-3 py-2 text-xs text-primary" />
                       ) : null}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {task.draftId ? <button type="button" onClick={() => onOpenDraft(task)} className="focus-ring h-8 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">Open Draft</button> : null}
                       {task.assetUrl ? <a href={task.assetUrl} target="_blank" rel="noreferrer" className="focus-ring inline-flex h-8 items-center rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">Open Asset</a> : null}
-                      {role === "admin" ? <button type="button" onClick={() => onDelete(task.id)} className="focus-ring h-8 rounded-lg border border-border bg-white px-3 text-xs font-medium text-danger hover:bg-red-50">Delete</button> : null}
+                      {isAdmin ? <button type="button" onClick={() => onDelete(task.id)} className="focus-ring h-8 rounded-lg border border-border bg-white px-3 text-xs font-medium text-danger hover:bg-red-50">Delete</button> : null}
                     </div>
                   </article>
                 )) : (
