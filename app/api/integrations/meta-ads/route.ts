@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { logIntegrationRun } from "@/lib/integrationLog";
+import { getRuntimeSetting } from "@/lib/runtimeSettings";
 
 function id(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -7,8 +8,9 @@ function id(prefix: string) {
 
 export async function POST(request: Request) {
   const payload = await request.json();
-  const endpoint = process.env.META_ADS_API_URL;
-  const accessToken = process.env.META_ACCESS_TOKEN;
+  const settings = await getRuntimeSetting("metaAds");
+  const endpoint = settings.enabled ? settings.endpoint || process.env.META_ADS_API_URL : process.env.META_ADS_API_URL;
+  const accessToken = settings.enabled ? settings.apiKey || process.env.META_ACCESS_TOKEN : process.env.META_ACCESS_TOKEN;
 
   if (!endpoint || !accessToken) {
     await logIntegrationRun({ id: id("integration"), integrationType: "meta_ads", status: "not_configured", payload });

@@ -27,6 +27,7 @@ import { createProject, generateComponentPromptPack } from "@/lib/generate";
 import { buildSearchText, cleanGenericOtherLanguage, getCustomFields, hasGenericOutputWarning, normalizeProject } from "@/lib/normalizeProject";
 import { filterExportData, getOutputFlags, type OutputFlags } from "@/lib/outputFilters";
 import { buildProductDecomposition, formatProductDecompositionMarkdown } from "@/lib/productDecomposition";
+import { runtimeProviderDefaults, type RuntimeProviderPublicSetting, type RuntimeProviderSetting } from "@/lib/runtimeSettingsShared";
 import { buildLocalStrategy, type GenerateStrategyResponse } from "@/lib/strategy";
 import { buildAssetSlots, buildDesignLayoutPlan, buildTeeinblueManifest, buildTeeinbluePackageSync, formatTeeinblueSetupGuide } from "@/lib/teeinbluePackage";
 import { createZipBlob, dataUrlToBytes, type ZipFileInput } from "@/lib/zipPackage";
@@ -424,6 +425,17 @@ async function fetchRemoteWorkspaceAccounts(): Promise<WorkspaceAccount[] | null
   }
 }
 
+async function fetchRuntimeSettings(): Promise<RuntimeProviderPublicSetting[]> {
+  try {
+    const response = await fetch("/api/runtime-settings", { cache: "no-store" });
+    if (!response.ok) return runtimeProviderDefaults.map((setting) => ({ ...setting, hasApiKey: false }));
+    const data = (await response.json()) as { settings?: RuntimeProviderPublicSetting[] };
+    return data.settings || runtimeProviderDefaults.map((setting) => ({ ...setting, hasApiKey: false }));
+  } catch {
+    return runtimeProviderDefaults.map((setting) => ({ ...setting, hasApiKey: false }));
+  }
+}
+
 async function saveRemoteDraft(draft: CreativeDraft) {
   try {
     await fetch("/api/drafts", {
@@ -434,6 +446,17 @@ async function saveRemoteDraft(draft: CreativeDraft) {
   } catch {
     // LocalStorage remains the offline fallback.
   }
+}
+
+async function saveRuntimeSettings(settings: RuntimeProviderSetting[]): Promise<RuntimeProviderPublicSetting[]> {
+  const response = await fetch("/api/runtime-settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings }),
+  });
+  const data = (await response.json()) as { settings?: RuntimeProviderPublicSetting[]; error?: string };
+  if (!response.ok || data.error) throw new Error(data.error || "Runtime settings could not be saved.");
+  return data.settings || runtimeProviderDefaults.map((setting) => ({ ...setting, hasApiKey: false }));
 }
 
 async function saveRemoteWorkspaceAccounts(accounts: WorkspaceAccount[]) {
@@ -1318,6 +1341,7 @@ export default function PodCreativeBuilder() {
   const [assetPlans, setAssetPlans] = useState<CreativeAssetPlan[]>(() => getCurrentDraft()?.assetPlans || []);
   const [componentAssetWorkflow, setComponentAssetWorkflow] = useState<ComponentAssetWorkflowState>(() => getCurrentDraft()?.componentAssetWorkflow || {});
   const [generatingAssetIds, setGeneratingAssetIds] = useState<string[]>([]);
+  const [runtimeSettings, setRuntimeSettings] = useState<RuntimeProviderPublicSetting[]>(() => runtimeProviderDefaults.map((setting) => ({ ...setting, hasApiKey: false })));
   const [health, setHealth] = useState<{
     groqConfigured: boolean;
     supabaseConfigured: boolean;
@@ -2523,10 +2547,24 @@ ${base}
   const openSettings = async () => {
     setActiveView("Settings");
     try {
-      const response = await fetch("/api/health");
-      if (response.ok) setHealth(await response.json());
+      const [healthResponse, settings] = await Promise.all([fetch("/api/health"), fetchRuntimeSettings()]);
+      if (healthResponse.ok) setHealth(await healthResponse.json());
+      setRuntimeSettings(settings);
     } catch {
       setHealth(null);
+    }
+  };
+
+  const updateRuntimeSettings = async (settings: RuntimeProviderSetting[]) => {
+    try {
+      const saved = await saveRuntimeSettings(settings);
+      setRuntimeSettings(saved);
+      await openSettings();
+      setToast("Runtime settings saved");
+      window.setTimeout(() => setToast(""), 1400);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Runtime settings could not be saved");
+      window.setTimeout(() => setToast(""), 2200);
     }
   };
 
@@ -2775,7 +2813,13 @@ ${base}
                 onOpenDraft={openTaskDraft}
               />
             ) : activeView === "Settings" ? (
-              <SettingsView health={health} generationMeta={generationMeta} onRefresh={openSettings} />
+              <SettingsView
+                health={health}
+                generationMeta={generationMeta}
+                runtimeSettings={runtimeSettings}
+                onRuntimeSettingsSave={updateRuntimeSettings}
+                onRefresh={openSettings}
+              />
             ) : (
               <>
                 <section className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -3571,6 +3615,8 @@ function DashboardView({
 function SettingsView({
   health,
   generationMeta,
+  runtimeSettings,
+  onRuntimeSettingsSave,
   onRefresh,
 }: {
   health:
@@ -3586,6 +3632,8 @@ function SettingsView({
       }
     | null;
   generationMeta?: GenerationMeta;
+  runtimeSettings: RuntimeProviderPublicSetting[];
+  onRuntimeSettingsSave: (settings: RuntimeProviderSetting[]) => void;
   onRefresh: () => void;
 }) {
   return (
@@ -3612,7 +3660,104 @@ function SettingsView({
         <InfoCard title="Last model" value={generationMeta?.model || "Not set"} />
         <InfoCard title="App version" value={health?.appVersion || "0.2.0"} />
       </div>
+      <RuntimeSettingsPanel key={runtimeSettings.map((setting) => `${setting.id}:${setting.updatedAt || ""}:${setting.maskedApiKey || ""}`).join("|")} settings={runtimeSettings} onSave={onRuntimeSettingsSave} />
     </section>
+  );
+}
+
+function RuntimeSettingsPanel({
+  settings,
+  onSave,
+}: {
+  settings: RuntimeProviderPublicSetting[];
+  onSave: (settings: RuntimeProviderSetting[]) => void;
+}) {
+  type RuntimeProviderDraftSetting = RuntimeProviderSetting & Pick<RuntimeProviderPublicSetting, "hasApiKey" | "maskedApiKey">;
+  const [draftSettings, setDraftSettings] = useState<RuntimeProviderDraftSetting[]>(() =>
+    settings.map((setting) => ({ ...setting, apiKey: setting.maskedApiKey || "" })),
+  );
+
+  const updateSetting = (id: RuntimeProviderSetting["id"], patch: Partial<RuntimeProviderSetting>) => {
+    setDraftSettings((current) => current.map((setting) => (setting.id === id ? { ...setting, ...patch } : setting)));
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-white p-5">
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-secondary">Runtime API Keys</p>
+          <h2 className="mt-1 text-lg font-semibold">Agents and provider keys</h2>
+          <p className="mt-1 text-sm leading-6 text-secondary">Changes are saved server-side. Existing keys show masked; leave the key field unchanged to keep the current key.</p>
+        </div>
+        <button type="button" onClick={() => onSave(draftSettings)} className="focus-ring inline-flex h-10 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-shade-70">
+          Save Runtime Settings
+        </button>
+      </div>
+      <div className="mt-5 grid gap-4">
+        {draftSettings.map((setting) => (
+          <article key={setting.id} className="rounded-xl border border-border bg-surface-muted p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="font-semibold text-primary">{setting.label}</h3>
+                <p className="mt-1 text-xs text-secondary">{setting.hasApiKey ? `Current key: ${setting.maskedApiKey}` : "No runtime key saved yet."}</p>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm font-medium text-primary">
+                <input
+                  type="checkbox"
+                  checked={setting.enabled}
+                  onChange={(event) => updateSetting(setting.id, { enabled: event.target.checked })}
+                  className="h-4 w-4"
+                />
+                Enabled
+              </label>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <input
+                value={setting.provider}
+                onChange={(event) => updateSetting(setting.id, { provider: event.target.value })}
+                placeholder="Provider"
+                className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary"
+              />
+              <input
+                value={setting.model || ""}
+                onChange={(event) => updateSetting(setting.id, { model: event.target.value })}
+                placeholder="Model / agent"
+                className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary"
+              />
+              <input
+                value={setting.apiKey || ""}
+                onChange={(event) => updateSetting(setting.id, { apiKey: event.target.value })}
+                placeholder="API key / access token"
+                type="password"
+                className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary"
+              />
+              <input
+                value={setting.endpoint || ""}
+                onChange={(event) => updateSetting(setting.id, { endpoint: event.target.value })}
+                placeholder="Endpoint URL"
+                className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary"
+              />
+              {setting.id === "shopify" ? (
+                <>
+                  <input
+                    value={setting.storeDomain || ""}
+                    onChange={(event) => updateSetting(setting.id, { storeDomain: event.target.value })}
+                    placeholder="Shopify store domain"
+                    className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary"
+                  />
+                  <input
+                    value={setting.apiVersion || ""}
+                    onChange={(event) => updateSetting(setting.id, { apiVersion: event.target.value })}
+                    placeholder="Shopify API version"
+                    className="focus-ring h-10 rounded-lg border border-border bg-white px-3 text-sm text-primary"
+                  />
+                </>
+              ) : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -76,6 +76,20 @@ create table if not exists public.workspace_accounts (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.runtime_provider_settings (
+  id text primary key,
+  provider_type text not null,
+  enabled boolean not null default false,
+  model text,
+  endpoint text,
+  store_domain text,
+  api_version text,
+  secret_key text,
+  setting jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.designer_tasks (
   id text primary key,
   title text not null,
@@ -239,6 +253,8 @@ create index if not exists integration_runs_type_idx on public.integration_runs 
 create index if not exists integration_runs_status_idx on public.integration_runs (status);
 create index if not exists workspace_accounts_role_idx on public.workspace_accounts (role, status);
 create index if not exists workspace_accounts_email_idx on public.workspace_accounts (email);
+create index if not exists runtime_provider_settings_provider_type_idx on public.runtime_provider_settings (provider_type);
+create index if not exists runtime_provider_settings_enabled_idx on public.runtime_provider_settings (enabled);
 create index if not exists designer_tasks_updated_at_idx on public.designer_tasks (updated_at desc);
 create index if not exists designer_tasks_status_idx on public.designer_tasks (status);
 create index if not exists designer_tasks_assignee_id_idx on public.designer_tasks (assignee_id, status);
@@ -272,6 +288,7 @@ $$;
 
 drop trigger if exists set_creative_drafts_updated_at on public.creative_drafts;
 drop trigger if exists set_workspace_accounts_updated_at on public.workspace_accounts;
+drop trigger if exists set_runtime_provider_settings_updated_at on public.runtime_provider_settings;
 drop trigger if exists set_artwork_assets_updated_at on public.artwork_assets;
 drop trigger if exists set_designer_tasks_updated_at on public.designer_tasks;
 drop trigger if exists set_component_asset_workflow_updated_at on public.component_asset_workflow;
@@ -287,6 +304,11 @@ execute function public.set_updated_at();
 
 create trigger set_workspace_accounts_updated_at
 before update on public.workspace_accounts
+for each row
+execute function public.set_updated_at();
+
+create trigger set_runtime_provider_settings_updated_at
+before update on public.runtime_provider_settings
 for each row
 execute function public.set_updated_at();
 
@@ -330,6 +352,7 @@ alter table public.generation_versions enable row level security;
 alter table public.export_records enable row level security;
 alter table public.integration_runs enable row level security;
 alter table public.workspace_accounts enable row level security;
+alter table public.runtime_provider_settings enable row level security;
 alter table public.designer_tasks enable row level security;
 alter table public.artwork_assets enable row level security;
 alter table public.component_asset_workflow enable row level security;

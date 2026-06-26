@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { logIntegrationRun } from "@/lib/integrationLog";
+import { getRuntimeSetting } from "@/lib/runtimeSettings";
 
 function id(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -7,8 +8,9 @@ function id(prefix: string) {
 
 export async function POST(request: Request) {
   const payload = await request.json();
-  const endpoint = process.env.TEEINBLUE_API_URL;
-  const apiKey = process.env.TEEINBLUE_API_KEY;
+  const settings = await getRuntimeSetting("teeinblue");
+  const endpoint = settings.enabled ? settings.endpoint || process.env.TEEINBLUE_API_URL : process.env.TEEINBLUE_API_URL;
+  const apiKey = settings.enabled ? settings.apiKey || process.env.TEEINBLUE_API_KEY : process.env.TEEINBLUE_API_KEY;
 
   if (!endpoint || !apiKey) {
     await logIntegrationRun({ id: id("integration"), integrationType: "teeinblue", status: "not_configured", payload });

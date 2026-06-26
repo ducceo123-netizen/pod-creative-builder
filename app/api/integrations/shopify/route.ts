@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { logIntegrationRun } from "@/lib/integrationLog";
+import { getRuntimeSetting } from "@/lib/runtimeSettings";
 
 type ShopifyPayload = {
   title?: string;
@@ -9,10 +10,10 @@ type ShopifyPayload = {
   status?: "draft" | "active";
 };
 
-function shopifyBaseUrl() {
-  const domain = process.env.SHOPIFY_STORE_DOMAIN?.replace(/^https?:\/\//, "").replace(/\/$/, "");
+function shopifyBaseUrl(storeDomain?: string, apiVersion?: string) {
+  const domain = (storeDomain || process.env.SHOPIFY_STORE_DOMAIN)?.replace(/^https?:\/\//, "").replace(/\/$/, "");
   if (!domain) return null;
-  return `https://${domain}/admin/api/${process.env.SHOPIFY_API_VERSION || "2025-10"}`;
+  return `https://${domain}/admin/api/${apiVersion || process.env.SHOPIFY_API_VERSION || "2025-10"}`;
 }
 
 function id(prefix: string) {
@@ -21,8 +22,9 @@ function id(prefix: string) {
 
 export async function POST(request: Request) {
   const body = (await request.json()) as { product?: ShopifyPayload; raw?: unknown };
-  const baseUrl = shopifyBaseUrl();
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+  const settings = await getRuntimeSetting("shopify");
+  const baseUrl = shopifyBaseUrl(settings.enabled ? settings.storeDomain : undefined, settings.enabled ? settings.apiVersion : undefined);
+  const token = settings.enabled ? settings.apiKey || process.env.SHOPIFY_ADMIN_ACCESS_TOKEN : process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
   if (!body.product?.title) {
     return NextResponse.json({ source: "shopify", status: "failed", error: "Missing product title." }, { status: 400 });

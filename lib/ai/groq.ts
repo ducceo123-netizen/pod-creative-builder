@@ -34,8 +34,11 @@ function extractJson(text: string) {
   return trimmed;
 }
 
-export async function generateStrategyWithGroq(request: GenerateStrategyRequest): Promise<GenerateStrategyResponse> {
-  const apiKey = process.env.GROQ_API_KEY;
+export async function generateStrategyWithGroq(
+  request: GenerateStrategyRequest,
+  options: { apiKey?: string; model?: string } = {},
+): Promise<GenerateStrategyResponse> {
+  const apiKey = options.apiKey || process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error("Missing GROQ_API_KEY. Add it to .env.local to enable Groq generation.");
   }
@@ -229,7 +232,7 @@ Rules:
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      model: options.model || process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: prompt },

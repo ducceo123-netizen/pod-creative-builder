@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateStrategyWithGroq } from "@/lib/ai/groq";
+import { getRuntimeSetting } from "@/lib/runtimeSettings";
 import { buildLocalStrategy, type GenerateStrategyRequest } from "@/lib/strategy";
 
 export async function POST(request: Request) {
@@ -9,16 +10,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing project in request body." }, { status: 400 });
   }
 
-  if (!process.env.GROQ_API_KEY) {
+  const groqSettings = await getRuntimeSetting("groq");
+  const apiKey = groqSettings.enabled ? groqSettings.apiKey || process.env.GROQ_API_KEY : process.env.GROQ_API_KEY;
+
+  if (!apiKey) {
     return NextResponse.json({
       ...buildLocalStrategy(body.project),
       source: "local",
-      fallbackReason: "Missing GROQ_API_KEY on the server. Add it to the app environment and restart/redeploy.",
+      fallbackReason: "Missing Groq API key. Add it in Settings > Runtime API Keys or set GROQ_API_KEY.",
     });
   }
 
   try {
-    return NextResponse.json({ ...(await generateStrategyWithGroq(body)), source: "groq" });
+    return NextResponse.json({ ...(await generateStrategyWithGroq(body, { apiKey, model: groqSettings.model })), source: "groq" });
   } catch (error) {
     console.error("Groq generation failed; falling back to local strategy.", error);
     return NextResponse.json({
