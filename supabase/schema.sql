@@ -54,6 +54,16 @@ create table if not exists public.export_records (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.integration_runs (
+  id text primary key,
+  draft_id text references public.creative_drafts(id) on delete set null,
+  integration_type text not null,
+  status text not null,
+  payload jsonb not null default '{}'::jsonb,
+  response jsonb,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.artwork_assets (
   id text primary key,
   draft_id text references public.creative_drafts(id) on delete cascade,
@@ -171,6 +181,9 @@ create index if not exists creative_drafts_opportunity_score_idx on public.creat
 create index if not exists generation_versions_draft_id_idx on public.generation_versions (draft_id, created_at desc);
 create index if not exists export_records_draft_id_idx on public.export_records (draft_id, created_at desc);
 create index if not exists export_records_export_type_idx on public.export_records (export_type);
+create index if not exists integration_runs_draft_id_idx on public.integration_runs (draft_id, created_at desc);
+create index if not exists integration_runs_type_idx on public.integration_runs (integration_type, created_at desc);
+create index if not exists integration_runs_status_idx on public.integration_runs (status);
 create index if not exists artwork_assets_draft_id_idx on public.artwork_assets (draft_id, updated_at desc);
 create index if not exists artwork_assets_concept_id_idx on public.artwork_assets (concept_id);
 create index if not exists artwork_assets_status_idx on public.artwork_assets (status);
@@ -243,6 +256,7 @@ execute function public.set_updated_at();
 alter table public.creative_drafts enable row level security;
 alter table public.generation_versions enable row level security;
 alter table public.export_records enable row level security;
+alter table public.integration_runs enable row level security;
 alter table public.artwork_assets enable row level security;
 alter table public.component_asset_workflow enable row level security;
 alter table public.asset_slots enable row level security;

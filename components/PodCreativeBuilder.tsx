@@ -181,6 +181,7 @@ type CreativeAngleGroup = {
 
 type AdMatrixRow = {
   id: string;
+  conceptId?: string;
   angleName: string;
   buyerInsight: string;
   hook: string;
@@ -871,6 +872,7 @@ function buildAdMatrixRows(project: Project, analysis: Analysis | null, concepts
     const copy = copyPacks[concept.id];
     return {
       id: `concept-matrix-${concept.id}`,
+      conceptId: concept.id,
       angleName: concept.name,
       buyerInsight: concept.oneLineIdea,
       hook: copy?.metaHooks[index % Math.max(copy.metaHooks.length, 1)] || concept.adHook,
@@ -1163,7 +1165,17 @@ export default function PodCreativeBuilder() {
   const [conceptExtras, setConceptExtras] = useState<ConceptExtras>(() => getCurrentDraft()?.conceptExtras || {});
   const [assetPlans, setAssetPlans] = useState<CreativeAssetPlan[]>(() => getCurrentDraft()?.assetPlans || []);
   const [componentAssetWorkflow, setComponentAssetWorkflow] = useState<ComponentAssetWorkflowState>(() => getCurrentDraft()?.componentAssetWorkflow || {});
-  const [health, setHealth] = useState<{ groqConfigured: boolean; supabaseConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null>(null);
+  const [generatingAssetIds, setGeneratingAssetIds] = useState<string[]>([]);
+  const [health, setHealth] = useState<{
+    groqConfigured: boolean;
+    supabaseConfigured: boolean;
+    imageProvider: string;
+    imageProviderConfigured: boolean;
+    teeinblueConfigured?: boolean;
+    shopifyConfigured?: boolean;
+    metaAdsConfigured?: boolean;
+    appVersion: string;
+  } | null>(null);
   const [draftSyncStatus, setDraftSyncStatus] = useState("Checking workspace sync");
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [clearNeedsConfirm, setClearNeedsConfirm] = useState(false);
@@ -1721,6 +1733,100 @@ ${base}
     reader.readAsDataURL(file);
   };
 
+  const generateArtworkAssetImage = async (asset: ArtworkAsset) => {
+    setGeneratingAssetIds((items) => [...items, asset.id]);
+    try {
+      const response = await fetch("/api/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: formatArtworkToolBrief(project, asset),
+          ratio: asset.recommendedRatio || "1:1",
+        }),
+      });
+      const data = (await response.json()) as { status?: string; imageUrl?: string; provider?: string; error?: string };
+      if (!response.ok || !data.imageUrl) {
+        setToast(data.error || "Image generation is not configured");
+        window.setTimeout(() => setToast(""), 1800);
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const nextArtworkAssets = artworkAssets.map((item) =>
+        item.id === asset.id
+          ? {
+              ...item,
+              uploadedAssetUrl: data.imageUrl,
+              uploadedAssetName: `${asset.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || asset.id}.png`,
+              uploadedAssetType: "image/png",
+              uploadedAssetSource: "local" as const,
+              status: "Generated Externally" as const,
+              updatedAt: now,
+            }
+          : item,
+      );
+      persistArtworkAssets(nextArtworkAssets);
+      setToast(`Generated with ${data.provider || "image provider"}`);
+      window.setTimeout(() => setToast(""), 1800);
+    } finally {
+      setGeneratingAssetIds((items) => items.filter((item) => item !== asset.id));
+    }
+  };
+
+  const generateComponentAssetImage = async (asset: ComponentAssetPlan) => {
+    const concept = selectedConcepts[0];
+    if (!concept) {
+      setToast("Select a concept first");
+      window.setTimeout(() => setToast(""), 1400);
+      return;
+    }
+
+    setGeneratingAssetIds((items) => [...items, asset.id]);
+    try {
+      const imageAsset = buildArtworkAssetFromComponentPlan({
+        asset,
+        concept,
+        project,
+        draftId: currentDraftId,
+        workflow: componentAssetWorkflow[asset.id],
+      });
+      const response = await fetch("/api/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: formatArtworkToolBrief(project, imageAsset),
+          ratio: imageAsset.recommendedRatio || "1:1",
+        }),
+      });
+      const data = (await response.json()) as { status?: string; imageUrl?: string; provider?: string; error?: string };
+      if (!response.ok || !data.imageUrl) {
+        setToast(data.error || "Image generation is not configured");
+        window.setTimeout(() => setToast(""), 1800);
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const nextWorkflow: ComponentAssetWorkflowState = {
+        ...componentAssetWorkflow,
+        [asset.id]: {
+          ...componentAssetWorkflow[asset.id],
+          status: "Generated",
+          uploadedAssetUrl: data.imageUrl,
+          uploadedAssetName: `${asset.assetName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || asset.id}.png`,
+          uploadedAssetType: "image/png",
+          uploadedAssetSource: "local",
+          updatedAt: now,
+        },
+      };
+      persistComponentAssetWorkflow(nextWorkflow);
+      upsertArtworkFromComponentAsset(asset.id, nextWorkflow);
+      setToast(`Generated with ${data.provider || "image provider"}`);
+      window.setTimeout(() => setToast(""), 1800);
+    } finally {
+      setGeneratingAssetIds((items) => items.filter((item) => item !== asset.id));
+    }
+  };
+
   const getTeeinblueConceptAssets = (concept: Concept) => {
     const conceptAssets = artworkAssets.filter((asset) => asset.conceptId === concept.id);
     const existingIds = new Set(conceptAssets.map((asset) => asset.id));
@@ -1791,6 +1897,58 @@ ${base}
     window.setTimeout(() => setToast(""), 1800);
   };
 
+  const pushTeeinbluePackage = async (concept: Concept) => {
+    const draftId = currentDraftId || id("draft");
+    const packageSync = buildTeeinbluePackageSync(draftId, project, concept, getTeeinblueConceptAssets(concept));
+    const response = await fetch("/api/integrations/teeinblue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(packageSync),
+    });
+    const data = (await response.json()) as { status?: string; message?: string; error?: unknown };
+    setToast(data.status === "synced" ? "Pushed to Teeinblue endpoint" : data.message || "Teeinblue handoff package ready");
+    window.setTimeout(() => setToast(""), 2200);
+  };
+
+  const publishShopifyDraft = async (concept: Concept) => {
+    const pack = copyPacks[concept.id];
+    if (!pack) return;
+    const response = await fetch("/api/integrations/shopify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        product: {
+          title: pack.shopifyTitles[0] || concept.name,
+          body_html: pack.fullDescription,
+          product_type: normalizeProject(project).normalizedProductType,
+          tags: pack.tags,
+          status: "draft",
+        },
+      }),
+    });
+    const data = (await response.json()) as { status?: string; message?: string; error?: unknown };
+    setToast(data.status === "created" ? "Shopify draft created" : data.message || "Shopify payload ready");
+    window.setTimeout(() => setToast(""), 2200);
+  };
+
+  const syncMetaAdsPayload = async (concept: Concept) => {
+    const pack = copyPacks[concept.id];
+    if (!pack) return;
+    const response = await fetch("/api/integrations/meta-ads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        concept,
+        copyPack: pack,
+        adMatrixRows: adMatrixRows.filter((row) => row.conceptId === concept.id),
+        assets: getTeeinblueConceptAssets(concept).filter((asset) => asset.assetGroup === "Ad Creative Assets" || asset.assetGroup === "Mockup Assets"),
+      }),
+    });
+    const data = (await response.json()) as { status?: string; message?: string; error?: unknown };
+    setToast(data.status === "synced" ? "Meta Ads payload synced" : data.message || "Meta Ads payload ready");
+    window.setTimeout(() => setToast(""), 2200);
+  };
+
   const exportTeeinblueZip = async (concept: Concept) => {
     const draftId = currentDraftId || id("draft");
     const conceptAssets = getTeeinblueConceptAssets(concept);
@@ -1831,6 +1989,56 @@ ${base}
       packageType: "teeinblue",
       assetCount: conceptAssets.length,
       uploadedAssetCount: packageSync.uploadedAssets.length,
+    });
+  };
+
+  const exportPsdPackage = async (concept: Concept) => {
+    const draftId = currentDraftId || id("draft");
+    const conceptAssets = getTeeinblueConceptAssets(concept);
+    const layout = buildDesignLayoutPlan(project, concept, conceptAssets);
+    const filePrefix = concept.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "photoshop-package";
+    const psdManifest = {
+      draftId,
+      conceptId: concept.id,
+      conceptName: concept.name,
+      canvas: layout.canvas,
+      printArea: layout.printArea,
+      layers: layout.layers.map((layer) => ({
+        ...layer,
+        recommendedPhotoshopName: layer.name,
+        sourceAssetId: layer.id.replace(/^layer-/, ""),
+      })),
+      note: "Photoshop handoff package. Import assets and recreate layers using the coordinates in photoshop_layers_manifest.json.",
+    };
+    const files: ZipFileInput[] = [
+      { path: "photoshop-package/photoshop_layers_manifest.json", data: JSON.stringify(psdManifest, null, 2) },
+      {
+        path: "photoshop-package/setup_guide.md",
+        data: `# Photoshop Assembly Guide
+
+1. Create a new document ${layout.canvas.width} x ${layout.canvas.height}px.
+2. Import assets from the assets folder.
+3. Use photoshop_layers_manifest.json for layer names, order, and coordinates.
+4. Keep guide layers hidden before production export.
+5. Export production PNG/PDF according to your POD supplier specs.
+`,
+      },
+    ];
+
+    conceptAssets.forEach((asset) => {
+      if (!asset.uploadedAssetUrl?.startsWith("data:")) return;
+      const extension = asset.uploadedAssetName?.split(".").pop() || (asset.uploadedAssetType === "image/svg+xml" ? "svg" : asset.uploadedAssetType === "image/jpeg" ? "jpg" : "png");
+      const safeName = (asset.uploadedAssetName || asset.title).toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || asset.id;
+      files.push({ path: `photoshop-package/assets/${safeName}.${extension}`, data: dataUrlToBytes(asset.uploadedAssetUrl) });
+    });
+
+    const previewPng = await renderTeeinbluePreviewPng(layout, conceptAssets);
+    if (previewPng) files.push({ path: "photoshop-package/final_preview.png", data: previewPng });
+
+    downloadBlob(`${filePrefix}-photoshop-package.zip`, createZipBlob(files), {
+      conceptId: concept.id,
+      packageType: "photoshop",
+      assetCount: conceptAssets.length,
     });
   };
 
@@ -2417,23 +2625,27 @@ ${base}
                       <ComponentAssetPlanTab
                         decomposition={productDecomposition}
                         workflow={componentAssetWorkflow}
+                        generatingAssetIds={generatingAssetIds}
                         onStatusChange={updateComponentAssetStatus}
                         onUpload={uploadComponentAsset}
+                        onGenerate={generateComponentAssetImage}
                         onCopied={showCopied}
                       />
                     )}
                     {displayedActiveTab === "Material Notes" && <MaterialNotesTab decomposition={productDecomposition} onCopied={showCopied} />}
                     {displayedActiveTab === "Ad Matrix" && <AdMatrixTab rows={adMatrixRows} onCopied={showCopied} onDownload={download} />}
                     {displayedActiveTab === "Copy" && (
-                      <CopyOutcomeTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={outputFlags} onCopied={showCopied} />
+                      <CopyOutcomeTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={outputFlags} onCopied={showCopied} onPublishShopify={publishShopifyDraft} onSyncMeta={syncMetaAdsPayload} />
                     )}
                     {displayedActiveTab === "Artwork Assets" && (
                       <ArtworkAssetsTab
                         project={project}
                         selectedConcepts={selectedConcepts}
                         artworkAssets={artworkAssets}
+                        generatingAssetIds={generatingAssetIds}
                         onStatusChange={updateArtworkAssetStatus}
                         onUpload={uploadArtworkAsset}
+                        onGenerate={generateArtworkAssetImage}
                         onCopied={showCopied}
                         onDownload={download}
                       />
@@ -2448,7 +2660,9 @@ ${base}
                         draftId={currentDraftId}
                         onDownload={download}
                         onExportZip={exportTeeinblueZip}
+                        onExportPsd={exportPsdPackage}
                         onSyncPackage={syncTeeinbluePackages}
+                        onPushPackage={pushTeeinbluePackage}
                       />
                     )}
                     {displayedActiveTab === "Component Prompts" && (
@@ -2784,7 +2998,18 @@ function SettingsView({
   generationMeta,
   onRefresh,
 }: {
-  health: { groqConfigured: boolean; supabaseConfigured: boolean; imageProvider: string; imageProviderConfigured: boolean; appVersion: string } | null;
+  health:
+    | {
+        groqConfigured: boolean;
+        supabaseConfigured: boolean;
+        imageProvider: string;
+        imageProviderConfigured: boolean;
+        teeinblueConfigured?: boolean;
+        shopifyConfigured?: boolean;
+        metaAdsConfigured?: boolean;
+        appVersion: string;
+      }
+    | null;
   generationMeta?: GenerationMeta;
   onRefresh: () => void;
 }) {
@@ -2804,6 +3029,9 @@ function SettingsView({
         <InfoCard title="Groq strategy generation" value={health ? (health.groqConfigured ? "Connected" : "Missing") : "Not checked"} />
         <InfoCard title="Supabase workspace" value={health ? (health.supabaseConfigured ? "Connected" : "Missing env") : "Not checked"} />
         <InfoCard title="Image provider" value={health ? `${health.imageProvider} · ${health.imageProviderConfigured ? "Configured" : "Missing"}` : "Not checked"} />
+        <InfoCard title="Teeinblue endpoint" value={health ? (health.teeinblueConfigured ? "Connected" : "Missing env") : "Not checked"} />
+        <InfoCard title="Shopify Admin" value={health ? (health.shopifyConfigured ? "Connected" : "Missing env") : "Not checked"} />
+        <InfoCard title="Meta Ads endpoint" value={health ? (health.metaAdsConfigured ? "Connected" : "Missing env") : "Not checked"} />
         <InfoCard title="Last source" value={getSourceLabel(generationMeta)} />
         <InfoCard title="Fallback used" value={generationMeta?.fallbackUsed ? `Yes · ${generationMeta.fallbackReason || "No reason provided"}` : "No"} />
         <InfoCard title="Last model" value={generationMeta?.model || "Not set"} />
@@ -3437,14 +3665,18 @@ function PersonalizationMapTab({ decomposition, onCopied }: { decomposition: Pro
 function ComponentAssetPlanTab({
   decomposition,
   workflow,
+  generatingAssetIds,
   onStatusChange,
   onUpload,
+  onGenerate,
   onCopied,
 }: {
   decomposition: ProductDecomposition;
   workflow: ComponentAssetWorkflowState;
+  generatingAssetIds: string[];
   onStatusChange: (assetId: string, status: ComponentAssetPlan["status"]) => void;
   onUpload: (assetId: string, file: File) => void;
+  onGenerate: (asset: ComponentAssetPlan) => void;
   onCopied: () => void;
 }) {
   const groups: ComponentAssetPlan["priority"][] = ["Must Have", "Should Have", "Optional"];
@@ -3515,6 +3747,15 @@ function ComponentAssetPlanTab({
                         }}
                       />
                     </label>
+                    <button
+                      type="button"
+                      onClick={() => onGenerate(asset)}
+                      disabled={generatingAssetIds.includes(asset.id)}
+                      className="focus-ring inline-flex h-8 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted disabled:opacity-60"
+                    >
+                      <Sparkles size={13} />
+                      {generatingAssetIds.includes(asset.id) ? "Generating" : "Generate image"}
+                    </button>
                     {(["Not Started", "Prompt Copied", "Generated", "Uploaded", "Approved", "Needs Revision"] as const).map((status) => (
                       <button
                         key={status}
@@ -3635,11 +3876,25 @@ function MaterialNotesTab({ decomposition, onCopied }: { decomposition: ProductD
   );
 }
 
-function CopyOutcomeTab({ selectedConcepts, copyPacks, flags, onCopied }: { selectedConcepts: Concept[]; copyPacks: Record<string, CopyPack>; flags: OutputFlags; onCopied: () => void }) {
+function CopyOutcomeTab({
+  selectedConcepts,
+  copyPacks,
+  flags,
+  onCopied,
+  onPublishShopify,
+  onSyncMeta,
+}: {
+  selectedConcepts: Concept[];
+  copyPacks: Record<string, CopyPack>;
+  flags: OutputFlags;
+  onCopied: () => void;
+  onPublishShopify: (concept: Concept) => void;
+  onSyncMeta: (concept: Concept) => void;
+}) {
   return (
     <div className="space-y-8">
-      <ShopifyTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={flags} onCopied={onCopied} />
-      <MetaTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={flags} onCopied={onCopied} />
+      <ShopifyTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={flags} onCopied={onCopied} onPublishShopify={onPublishShopify} />
+      <MetaTab selectedConcepts={selectedConcepts} copyPacks={copyPacks} flags={flags} onCopied={onCopied} onSyncMeta={onSyncMeta} />
     </div>
   );
 }
@@ -3855,16 +4110,20 @@ function ArtworkAssetsTab({
   project,
   selectedConcepts,
   artworkAssets,
+  generatingAssetIds,
   onStatusChange,
   onUpload,
+  onGenerate,
   onCopied,
   onDownload,
 }: {
   project: Project;
   selectedConcepts: Concept[];
   artworkAssets: ArtworkAsset[];
+  generatingAssetIds: string[];
   onStatusChange: (assetId: string, status: ArtworkAsset["status"]) => void;
   onUpload: (assetId: string, file: File) => void;
+  onGenerate: (asset: ArtworkAsset) => void;
   onCopied: () => void;
   onDownload: (name: string, value: string, type: string) => void;
 }) {
@@ -4022,6 +4281,15 @@ function ArtworkAssetsTab({
                               }}
                             />
                           </label>
+                          <button
+                            type="button"
+                            onClick={() => onGenerate(asset)}
+                            disabled={generatingAssetIds.includes(asset.id)}
+                            className="focus-ring inline-flex h-8 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted disabled:opacity-60"
+                          >
+                            <Sparkles size={13} />
+                            {generatingAssetIds.includes(asset.id) ? "Generating" : "Generate image"}
+                          </button>
                           {[
                             ["Missing", "Not Started"],
                             ["Prompt Copied", "Copied"],
@@ -4064,7 +4332,9 @@ function TeeinbluePackageTab({
   draftId,
   onDownload,
   onExportZip,
+  onExportPsd,
   onSyncPackage,
+  onPushPackage,
 }: {
   project: Project;
   selectedConcepts: Concept[];
@@ -4074,7 +4344,9 @@ function TeeinbluePackageTab({
   draftId?: string | null;
   onDownload: (name: string, value: string, type: string) => void;
   onExportZip: (concept: Concept) => void;
+  onExportPsd: (concept: Concept) => void;
   onSyncPackage: (concept?: Concept) => void;
+  onPushPackage: (concept: Concept) => void;
 }) {
   if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to build a Teeinblue package.</p>;
 
@@ -4137,9 +4409,17 @@ function TeeinbluePackageTab({
                   <Download size={14} />
                   Export ZIP
                 </button>
+                <button type="button" onClick={() => onExportPsd(concept)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Download size={14} />
+                  PSD Package
+                </button>
                 <button type="button" onClick={() => onSyncPackage(concept)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
                   <Upload size={14} />
                   Sync
+                </button>
+                <button type="button" onClick={() => onPushPackage(concept)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Upload size={14} />
+                  Push Teeinblue
                 </button>
                 <button type="button" onClick={() => onDownload(`${filePrefix}-teeinblue-manifest.json`, manifestJson, "application/json")} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
                   <FileJson size={14} />
@@ -4395,11 +4675,13 @@ function ShopifyTab({
   copyPacks,
   flags,
   onCopied,
+  onPublishShopify,
 }: {
   selectedConcepts: Concept[];
   copyPacks: Record<string, CopyPack>;
   flags: OutputFlags;
   onCopied: () => void;
+  onPublishShopify: (concept: Concept) => void;
 }) {
   if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to generate Shopify copy.</p>;
   return (
@@ -4417,7 +4699,13 @@ function ShopifyTab({
           <section key={concept.id} className="space-y-3 rounded-xl border border-border bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-xl font-medium">{concept.name}</h3>
-              <CopyButton value={JSON.stringify(pack, null, 2)} onCopied={onCopied} />
+              <div className="flex flex-wrap gap-2">
+                <CopyButton value={JSON.stringify(pack, null, 2)} onCopied={onCopied} />
+                <button type="button" onClick={() => onPublishShopify(concept)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Upload size={14} />
+                  Create Shopify Draft
+                </button>
+              </div>
             </div>
             {flags.shopifyCopy ? (
               <>
@@ -4439,11 +4727,13 @@ function MetaTab({
   copyPacks,
   flags,
   onCopied,
+  onSyncMeta,
 }: {
   selectedConcepts: Concept[];
   copyPacks: Record<string, CopyPack>;
   flags: OutputFlags;
   onCopied: () => void;
+  onSyncMeta: (concept: Concept) => void;
 }) {
   if (!flags.metaAds) return <p className="text-sm text-secondary">Meta Ads output is not selected for this brief.</p>;
   if (!selectedConcepts.length) return <p className="text-sm text-secondary">Select concepts to generate Meta Ads copy.</p>;
@@ -4461,7 +4751,13 @@ function MetaTab({
         return (
           <section key={concept.id} className="grid gap-4 rounded-xl border border-border bg-white p-5 md:grid-cols-2">
             <div className="md:col-span-2">
-              <h3 className="text-xl font-medium">{concept.name}</h3>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="text-xl font-medium">{concept.name}</h3>
+                <button type="button" onClick={() => onSyncMeta(concept)} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-primary bg-white px-3 text-xs font-medium text-primary hover:bg-surface-muted">
+                  <Upload size={14} />
+                  Sync Meta Payload
+                </button>
+              </div>
             </div>
             <ListCard title="Hook options" items={pack.metaHooks} />
             <ListCard title="Primary text options" items={pack.primaryTexts} />
