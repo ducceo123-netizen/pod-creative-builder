@@ -3126,6 +3126,13 @@ function TaskBoardView({
     onUpdate(draggedTaskId, { status });
     setDraggedTaskId(null);
   }, [draggedTaskId, onUpdate, tasks]);
+  const startTaskDrag = (taskId: string, target: EventTarget | null) => {
+    const element = target instanceof Element ? target : null;
+    const isInteractive = Boolean(element?.closest("button, input, select, textarea, a"));
+    const isHandle = Boolean(element?.closest("[data-task-drag-handle]"));
+    if (isInteractive && !isHandle) return;
+    setDraggedTaskId(taskId);
+  };
   useEffect(() => {
     if (!draggedTaskId) return;
     const handlePointerUp = (event: PointerEvent) => {
@@ -3272,8 +3279,9 @@ function TaskBoardView({
                 {columnTasks.length ? columnTasks.map((task) => (
                   <article
                     key={task.id}
+                    onPointerDown={(event) => startTaskDrag(task.id, event.target)}
                     className={cx(
-                      "rounded-xl border bg-white p-4 transition",
+                      "cursor-grab rounded-xl border bg-white p-4 transition active:cursor-grabbing",
                       draggedTaskId === task.id ? "border-primary opacity-60 shadow-soft" : "border-border",
                     )}
                   >
@@ -3282,6 +3290,7 @@ function TaskBoardView({
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
+                            data-task-drag-handle="true"
                             onPointerDown={(event) => {
                               event.preventDefault();
                               setDraggedTaskId(task.id);
