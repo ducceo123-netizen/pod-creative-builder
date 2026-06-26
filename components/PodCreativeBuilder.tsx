@@ -19,7 +19,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BRAND_VOICES, ART_STYLES, BUYER_PERSONAS, OCCASIONS, OUTPUT_REQUESTS, PRODUCT_TYPES } from "@/lib/constants";
 import { buildArtworkAssets, formatArtworkAssetsJson, formatArtworkAssetsMarkdown, formatArtworkToolBrief } from "@/lib/artworkAssets";
 import { exportMarkdown } from "@/lib/exportMarkdown";
@@ -3038,7 +3038,7 @@ function TaskBoardView({
   const openTasks = visibleTasks.filter((task) => task.status !== "Done" && task.status !== "Approved");
   const reviewTasks = visibleTasks.filter((task) => task.status === "Review" || task.status === "Needs Revision");
   const doneTasks = visibleTasks.filter((task) => task.status === "Done" || task.status === "Approved");
-  const statuses: DesignerTaskStatus[] = ["Ready", "In Progress", "Review", "Needs Revision", "Approved", "Done"];
+  const statuses = useMemo<DesignerTaskStatus[]>(() => ["Ready", "In Progress", "Review", "Needs Revision", "Approved", "Done"], []);
 
   const selectedDraft = drafts.find((draft) => draft.id === form.draftId);
   const selectedAssignee = accounts.find((account) => account.id === form.assigneeId) || activeDesigners[0];
@@ -3072,7 +3072,7 @@ function TaskBoardView({
     });
     setAccountForm({ name: "", email: "", role: "designer", title: "" });
   };
-  const moveDraggedTask = (status: DesignerTaskStatus) => {
+  const moveDraggedTask = useCallback((status: DesignerTaskStatus) => {
     if (!draggedTaskId) return;
     const task = tasks.find((item) => item.id === draggedTaskId);
     if (!task || task.status === status) {
@@ -3081,7 +3081,21 @@ function TaskBoardView({
     }
     onUpdate(draggedTaskId, { status });
     setDraggedTaskId(null);
-  };
+  }, [draggedTaskId, onUpdate, tasks]);
+  useEffect(() => {
+    if (!draggedTaskId) return;
+    const handlePointerUp = (event: PointerEvent) => {
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const status = target instanceof Element ? target.closest<HTMLElement>("[data-task-status]")?.dataset.taskStatus : undefined;
+      if (status && statuses.includes(status as DesignerTaskStatus)) {
+        moveDraggedTask(status as DesignerTaskStatus);
+      } else {
+        setDraggedTaskId(null);
+      }
+    };
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => window.removeEventListener("pointerup", handlePointerUp);
+  }, [draggedTaskId, moveDraggedTask, statuses]);
 
   return (
     <section className="space-y-6">
@@ -3191,6 +3205,8 @@ function TaskBoardView({
           return (
             <section
               key={status}
+              data-task-status={status}
+              onPointerUp={() => moveDraggedTask(status)}
               onDragOver={(event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
@@ -3212,22 +3228,26 @@ function TaskBoardView({
                 {columnTasks.length ? columnTasks.map((task) => (
                   <article
                     key={task.id}
-                    draggable
-                    onDragStart={(event) => {
-                      setDraggedTaskId(task.id);
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", task.id);
-                    }}
-                    onDragEnd={() => setDraggedTaskId(null)}
                     className={cx(
-                      "cursor-grab rounded-xl border bg-white p-4 transition active:cursor-grabbing",
+                      "rounded-xl border bg-white p-4 transition",
                       draggedTaskId === task.id ? "border-primary opacity-60 shadow-soft" : "border-border",
                     )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-border bg-surface-muted text-xs font-semibold text-secondary" title="Drag task">⋮⋮</span>
+                          <button
+                            type="button"
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              setDraggedTaskId(task.id);
+                            }}
+                            className="grid h-7 w-7 shrink-0 cursor-grab touch-none place-items-center rounded-md border border-border bg-surface-muted text-xs font-semibold text-secondary active:cursor-grabbing"
+                            title="Drag task"
+                            aria-label={`Drag ${task.title}`}
+                          >
+                            ⋮⋮
+                          </button>
                           <h4 className="font-semibold text-primary">{task.title}</h4>
                         </div>
                         <p className="mt-1 text-xs text-secondary">{task.taskType} · {task.assignee}</p>
