@@ -3033,6 +3033,7 @@ function TaskBoardView({
     dueDate: "",
   });
   const [accountForm, setAccountForm] = useState({ name: "", email: "", role: "designer" as DesignerRole, title: "" });
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const visibleTasks = isAdmin ? tasks : tasks.filter((task) => task.assigneeId === activeAccount.id || task.assignee === activeAccount.name);
   const openTasks = visibleTasks.filter((task) => task.status !== "Done" && task.status !== "Approved");
   const reviewTasks = visibleTasks.filter((task) => task.status === "Review" || task.status === "Needs Revision");
@@ -3071,6 +3072,16 @@ function TaskBoardView({
     });
     setAccountForm({ name: "", email: "", role: "designer", title: "" });
   };
+  const moveDraggedTask = (status: DesignerTaskStatus) => {
+    if (!draggedTaskId) return;
+    const task = tasks.find((item) => item.id === draggedTaskId);
+    if (!task || task.status === status) {
+      setDraggedTaskId(null);
+      return;
+    }
+    onUpdate(draggedTaskId, { status });
+    setDraggedTaskId(null);
+  };
 
   return (
     <section className="space-y-6">
@@ -3094,6 +3105,9 @@ function TaskBoardView({
         <InfoCard title="Open" value={`${openTasks.length}`} />
         <InfoCard title="Needs review" value={`${reviewTasks.length}`} />
         <InfoCard title="Done" value={`${doneTasks.length}`} />
+      </div>
+      <div className="rounded-xl border border-border bg-white px-4 py-3 text-sm text-secondary">
+        Drag a task card between columns to update its status. Status changes save to the workspace automatically.
       </div>
 
       {isAdmin ? (
@@ -3173,18 +3187,49 @@ function TaskBoardView({
       <div className="grid gap-4 xl:grid-cols-3">
         {statuses.map((status) => {
           const columnTasks = visibleTasks.filter((task) => task.status === status);
+          const isDropTarget = Boolean(draggedTaskId);
           return (
-            <section key={status} className="rounded-xl border border-border bg-surface-muted p-3">
+            <section
+              key={status}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                moveDraggedTask(status);
+              }}
+              className={cx(
+                "rounded-xl border p-3 transition",
+                isDropTarget ? "border-primary bg-[#eaf4ff]" : "border-border bg-surface-muted",
+              )}
+            >
               <div className="flex items-center justify-between gap-2 px-1">
                 <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-secondary">{status}</h3>
                 <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-secondary">{columnTasks.length}</span>
               </div>
               <div className="mt-3 space-y-3">
                 {columnTasks.length ? columnTasks.map((task) => (
-                  <article key={task.id} className="rounded-xl border border-border bg-white p-4">
+                  <article
+                    key={task.id}
+                    draggable
+                    onDragStart={(event) => {
+                      setDraggedTaskId(task.id);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", task.id);
+                    }}
+                    onDragEnd={() => setDraggedTaskId(null)}
+                    className={cx(
+                      "cursor-grab rounded-xl border bg-white p-4 transition active:cursor-grabbing",
+                      draggedTaskId === task.id ? "border-primary opacity-60 shadow-soft" : "border-border",
+                    )}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <h4 className="font-semibold text-primary">{task.title}</h4>
+                        <div className="flex items-center gap-2">
+                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-border bg-surface-muted text-xs font-semibold text-secondary" title="Drag task">⋮⋮</span>
+                          <h4 className="font-semibold text-primary">{task.title}</h4>
+                        </div>
                         <p className="mt-1 text-xs text-secondary">{task.taskType} · {task.assignee}</p>
                       </div>
                       <span className={cx("rounded-full px-2.5 py-1 text-xs font-semibold", task.priority === "Urgent" || task.priority === "High" ? "bg-amber-50 text-warning" : "bg-surface-muted text-secondary")}>{task.priority}</span>
